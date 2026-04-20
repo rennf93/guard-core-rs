@@ -1,0 +1,13 @@
+[package]
+name = "guard-core"
+version = "0.0.1"
+edition = "2024"
+description = "Application-layer API security engine. Rust port of guard-core (Python). WIP."
+license = "MIT"
+repository = "https://github.com/rennf93/guard-core-rs"
+readme = "README.md"
+keywords = ["security", "middleware", "api"]
+categories = ["web-programming"]
+
+[lib]
+name = "guard_core"
