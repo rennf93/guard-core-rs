@@ -1,5 +1,5 @@
 [package]
-name = "guard-core"
+name = "guard-core-rs"
 version = "0.0.1"
 edition = "2024"
 description = "Application-layer API security engine. Rust port of guard-core (Python). WIP."
@@ -10,4 +10,4 @@ keywords = ["security", "middleware", "api"]
 categories = ["web-programming"]
 
 [lib]
-name = "guard_core"
+name = "guard_core_rs"

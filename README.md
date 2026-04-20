@@ -1,4 +1,4 @@
-# guard-core
+# guard-core-rs
 
 Rust implementation of the [guard-core](https://github.com/rennf93/guard-core) detection engine. **Work in progress — namespace placeholder.**
 
