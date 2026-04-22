@@ -1,0 +1,74 @@
+[
+  {
+    "name": "clean_get",
+    "python_ns": 1427619,
+    "rust_maturin_ns": 740771,
+    "speedup": 1.9
+  },
+  {
+    "name": "clean_json",
+    "python_ns": 1421915,
+    "rust_maturin_ns": 800123,
+    "speedup": 1.8
+  },
+  {
+    "name": "xss_basic",
+    "python_ns": 1412033,
+    "rust_maturin_ns": 937389,
+    "speedup": 1.5
+  },
+  {
+    "name": "xss_bypass",
+    "python_ns": 1355305,
+    "rust_maturin_ns": 970402,
+    "speedup": 1.4
+  },
+  {
+    "name": "sqli_union",
+    "python_ns": 1460649,
+    "rust_maturin_ns": 732336,
+    "speedup": 2.0
+  },
+  {
+    "name": "sqli_encoded",
+    "python_ns": 1470926,
+    "rust_maturin_ns": 722632,
+    "speedup": 2.0
+  },
+  {
+    "name": "cmd_injection",
+    "python_ns": 1477203,
+    "rust_maturin_ns": 721788,
+    "speedup": 2.0
+  },
+  {
+    "name": "path_traversal",
+    "python_ns": 1431302,
+    "rust_maturin_ns": 751701,
+    "speedup": 1.9
+  },
+  {
+    "name": "template_injection",
+    "python_ns": 1535097,
+    "rust_maturin_ns": 750481,
+    "speedup": 2.0
+  },
+  {
+    "name": "double_encoded",
+    "python_ns": 1472759,
+    "rust_maturin_ns": 821818,
+    "speedup": 1.8
+  },
+  {
+    "name": "mixed_attack",
+    "python_ns": 1435531,
+    "rust_maturin_ns": 855211,
+    "speedup": 1.7
+  },
+  {
+    "name": "throughput_100_mixed",
+    "python_ns": 155644646,
+    "rust_maturin_ns": 77310542,
+    "speedup": 2.0
+  }
+]
