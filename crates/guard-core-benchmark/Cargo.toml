@@ -1,0 +1,43 @@
+[package]
+name = "guard-core-benchmark"
+version = "0.0.1"
+publish = false
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[lib]
+bench = false
+doctest = false
+test = false
+
+[dependencies]
+criterion = { workspace = true }
+guard-core-engine = { workspace = true }
+
+[[bench]]
+name = "compiler"
+harness = false
+
+[[bench]]
+name = "detection_engine"
+harness = false
+
+[[bench]]
+name = "preprocessor"
+harness = false
+
+[[bench]]
+name = "semantic"
+harness = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+cast_possible_truncation = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+nursery = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
