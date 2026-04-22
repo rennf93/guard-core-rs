@@ -1,0 +1,27 @@
+[package]
+name = "guard-core-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+guard-core-engine = { path = "../crates/guard-core-engine" }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "fuzz_compiler"
+path = "fuzz_targets/fuzz_compiler.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_preprocess"
+path = "fuzz_targets/fuzz_preprocess.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_semantic"
+path = "fuzz_targets/fuzz_semantic.rs"
+doc = false
