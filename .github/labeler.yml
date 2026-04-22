@@ -1,0 +1,129 @@
+"area: protocols":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/protocols/**
+
+"area: checks":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/core/checks/**
+          - tests/test_check_*.rs
+          - tests/test_checks*.rs
+          - benches/checks.rs
+
+"area: detection-engine":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/detection_engine/**
+          - tests/test_detection_engine.rs
+          - tests/test_preprocessor.rs
+          - benches/detection_engine.rs
+          - benches/suspatterns.rs
+
+"area: handlers":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/handlers/**
+          - tests/test_redis.rs
+          - tests/test_ratelimit.rs
+          - tests/test_ipban.rs
+          - tests/test_ipinfo.rs
+          - tests/test_cloud.rs
+          - tests/test_behavior.rs
+          - tests/test_dynamic_rule.rs
+          - tests/test_security_headers.rs
+          - tests/test_suspatterns.rs
+          - tests/test_handlers.rs
+          - benches/rate_limit.rs
+
+"area: decorators":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/decorators/**
+          - tests/test_decorators.rs
+
+"area: core-subsystems":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/core/responses/**
+          - src/core/routing/**
+          - src/core/validation/**
+          - src/core/bypass/**
+          - src/core/behavioral/**
+          - src/core/events/**
+          - src/core/initialization/**
+          - tests/test_core_*.rs
+          - tests/test_responses.rs
+          - tests/test_request_state.rs
+
+"area: models":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/models.rs
+          - tests/test_models.rs
+
+"area: errors":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/error.rs
+          - tests/test_error.rs
+
+"area: utils":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/utils.rs
+          - tests/test_utils.rs
+
+"area: scripts":
+  - changed-files:
+      - any-glob-to-any-file:
+          - src/scripts/**
+          - tests/test_scripts.rs
+
+tests:
+  - changed-files:
+      - any-glob-to-any-file:
+          - tests/**
+
+benchmarks:
+  - changed-files:
+      - any-glob-to-any-file:
+          - benches/**
+
+examples:
+  - changed-files:
+      - any-glob-to-any-file:
+          - examples/**
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - docs/**
+          - README.md
+          - CHANGELOG.md
+          - CONTRIBUTING.md
+          - SECURITY.md
+          - CODE_OF_CONDUCT.md
+          - LICENSE-MIT
+          - LICENSE-APACHE
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - .github/**
+          - .pre-commit-config.yaml
+
+build:
+  - changed-files:
+      - any-glob-to-any-file:
+          - Makefile
+          - Dockerfile
+          - compose.yml
+          - rustfmt.toml
+          - deny.toml
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - Cargo.toml
+          - Cargo.lock
