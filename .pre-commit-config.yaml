@@ -1,0 +1,45 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: check-toml
+      - id: check-yaml
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: fmt
+        args: ["--all", "--", "--check"]
+      - id: clippy
+        args: ["--all-features", "--all-targets", "--", "-D", "warnings"]
+      - id: cargo-check
+        args: ["--all-features", "--all-targets"]
+
+  - repo: local
+    hooks:
+      - id: cargo-test-compile
+        name: cargo test --no-run
+        entry: cargo test --all-features --no-run
+        language: system
+        pass_filenames: false
+        types: [rust]
+
+      - id: cargo-deny
+        name: cargo deny check
+        entry: cargo deny check advisories bans licenses sources
+        language: system
+        pass_filenames: false
+        files: ^(Cargo\.(toml|lock)|deny\.toml)$
+
+      - id: forbidden-allow-attr
+        name: forbidden #[allow(...)] attribute
+        entry: '\#\[allow\('
+        language: pygrep
+        types: [rust]
+        exclude: ^tests/

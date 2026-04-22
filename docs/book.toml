@@ -1,0 +1,24 @@
+[book]
+title = "guard-core-rs"
+description = "The Rust port of guard-core: framework-agnostic application-layer API security engine."
+authors = ["Renzo Franceschini <rennf93@gmail.com>"]
+language = "en"
+multilingual = false
+src = "src"
+
+[rust]
+edition = "2024"
+
+[output.html]
+default-theme = "navy"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/rennf93/guard-core-rs"
+edit-url-template = "https://github.com/rennf93/guard-core-rs/edit/master/docs/{path}"
+site-url = "/guard-core-rs/"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.playground]
+runnable = false

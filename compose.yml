@@ -1,0 +1,39 @@
+services:
+  guard-core-rs:
+    build:
+      context: .
+      args:
+        RUST_VERSION: ${RUST_VERSION:-1.85}
+      target: test
+    image: guard-core-rs:${RUST_VERSION:-1.85}
+    command: cargo test --all-features --no-fail-fast
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - REDIS_PREFIX=${REDIS_PREFIX:-test:guard_core_rs:}
+      - RUST_BACKTRACE=1
+      - CARGO_INCREMENTAL=0
+    volumes:
+      - ./src:/app/src:z
+      - ./tests:/app/tests:z
+      - ./benches:/app/benches:z
+      - ./examples:/app/examples:z
+      - ./Cargo.toml:/app/Cargo.toml:z
+      - ./Cargo.lock:/app/Cargo.lock:z
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
+    depends_on:
+      redis:
+        condition: service_started
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --save 60 1 --loglevel warning
+
+volumes:
+  redis-data:
+  cargo-cache:
+  target-cache:

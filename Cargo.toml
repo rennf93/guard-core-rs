@@ -2,12 +2,134 @@
 name = "guard-core-rs"
 version = "0.0.1"
 edition = "2024"
-description = "Application-layer API security engine. Rust port of guard-core (Python). WIP."
-license = "MIT"
+rust-version = "1.85"
+description = "Framework-agnostic application-layer API security engine. Rust port of guard-core (Python)."
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/rennf93/guard-core-rs"
 readme = "README.md"
-keywords = ["security", "middleware", "api"]
-categories = ["web-programming"]
+keywords = ["security", "middleware", "api", "rate-limit", "waf"]
+categories = ["web-programming", "authentication"]
 
 [lib]
 name = "guard_core_rs"
+path = "src/lib.rs"
+
+[features]
+default = ["redis-support", "geoip", "agent", "cloud-providers"]
+redis-support = ["dep:redis", "dep:deadpool-redis"]
+geoip = ["dep:maxminddb"]
+agent = []
+cloud-providers = ["dep:quick-xml"]
+
+[dependencies]
+tokio = { version = "1.41", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "fs", "net", "signal"] }
+async-trait = "0.1"
+futures = "0.3"
+futures-util = "0.3"
+
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+serde_with = { version = "3", features = ["json"] }
+
+thiserror = "2"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter", "fmt"] }
+
+regex = "1.11"
+regex-syntax = "0.8"
+
+ipnet = { version = "2.10", features = ["serde"] }
+
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+
+redis = { version = "0.27", default-features = false, features = ["tokio-comp", "tokio-rustls-comp", "script", "streams", "connection-manager"], optional = true }
+deadpool-redis = { version = "0.18", optional = true }
+
+maxminddb = { version = "0.24", optional = true }
+
+chrono = { version = "0.4", features = ["serde"] }
+
+parking_lot = "0.12"
+dashmap = "6"
+
+moka = { version = "0.12", features = ["future"] }
+
+bytes = "1"
+url = { version = "2.5", features = ["serde"] }
+uuid = { version = "1.11", features = ["v4", "serde"] }
+
+unicode-normalization = "0.1"
+
+rand = "0.8"
+
+quick-xml = { version = "0.37", features = ["serialize"], optional = true }
+
+num_cpus = "1"
+
+[dev-dependencies]
+tokio = { version = "1.41", features = ["test-util", "rt-multi-thread", "macros"] }
+tokio-test = "0.4"
+mockall = "0.13"
+wiremock = "0.6"
+rstest = "0.23"
+pretty_assertions = "1.4"
+serde_yaml = "0.9"
+tempfile = "3.13"
+anyhow = "1"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "detection_engine"
+harness = false
+
+[[bench]]
+name = "checks"
+harness = false
+
+[[bench]]
+name = "suspatterns"
+harness = false
+
+[[bench]]
+name = "rate_limit"
+harness = false
+
+[[example]]
+name = "quickstart"
+
+[[example]]
+name = "with_decorator"
+
+[[example]]
+name = "custom_check"
+
+[[example]]
+name = "pattern_detection"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+
+[profile.test]
+opt-level = 0
+debug = true
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+correctness = "warn"
+suspicious = "warn"
+complexity = "warn"
+perf = "warn"
+style = "warn"
