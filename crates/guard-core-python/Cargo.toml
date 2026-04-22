@@ -1,0 +1,27 @@
+[package]
+name = "guard-core-python"
+version = "0.0.1"
+publish = false
+edition = { workspace = true }
+rust-version = { workspace = true }
+
+[lib]
+crate-type = ["cdylib"]
+name = "guard_core_rs"
+
+[dependencies]
+guard-core-engine = { workspace = true }
+pyo3 = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+nursery = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
