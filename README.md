@@ -8,29 +8,12 @@ Framework-agnostic application-layer API security engine — Rust port of
 Active port in progress. The core engine compiles cleanly, all features
 build, and the base test suite passes. See `./tests` for coverage.
 
-## What's ported
-
-| Subsystem | Status |
-|---|---|
-| Models (`SecurityConfig`, `DynamicRules`) | complete |
-| Protocols (request/response/middleware/redis/geo-ip/agent traits) | complete |
-| Detection engine (pattern compiler, performance monitor, preprocessor, semantic analyzer) | complete |
-| Handlers (redis, ratelimit, ipban, cloud, ipinfo, behavior, dynamic-rule, security-headers, suspatterns) | complete |
-| Core subsystems (responses, routing, validation, bypass, behavioral, events, initialization) | complete |
-| Security check pipeline + 17 check implementations | complete |
-| Decorators (builder API on `RouteConfig`) | complete |
-| Prompt-injection subsystem (feature-gated) | in progress |
-| Test suite | in progress (70+ tests passing) |
-| Makefile + CI + deny.toml | complete |
-
 ## Features
 
 - `redis-support` (default) — async Redis via `redis` + `deadpool-redis`
 - `geoip` (default) — MaxMind database reader
 - `cloud-providers` (default) — AWS / GCP / Azure IP range fetching
 - `agent` (default) — SaaS telemetry plumbing
-- `prompt-injection` — pattern/statistical prompt-injection detection
-- `prompt-injection-ml` — transformer/embedding detectors (feature-gated)
 
 ## Quickstart
 
@@ -75,4 +58,4 @@ make security          # cargo audit + cargo deny
 
 ## License
 
-MIT
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE) at your option.
