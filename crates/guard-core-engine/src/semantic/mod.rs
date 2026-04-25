@@ -3,6 +3,9 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
+use crate::util::ceil_boundary;
+use crate::util::floor_boundary;
+
 mod keywords;
 mod patterns;
 
@@ -53,7 +56,8 @@ static INJECTION_KW_RE: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 /// A structural pattern match with surrounding context.
 #[derive(Debug, Clone)]
 pub struct SuspiciousPattern {
-    pub pattern_type: String,
+    /// Pattern category name from [`AttackStructures`] (one of 5 fixed values).
+    pub pattern_type: &'static str,
     pub matched: String,
     pub position: usize,
     /// Substring surrounding the match (up to 20 chars each side).
@@ -76,7 +80,12 @@ pub struct AnalysisResult {
 #[doc(hidden)]
 pub fn extract_tokens(content: &str, structures: &AttackStructures) -> Vec<String> {
     let content = if content.len() > MAX_CONTENT_LENGTH {
-        &content[..MAX_CONTENT_LENGTH]
+        // truncate at char boundary
+        let mut end = MAX_CONTENT_LENGTH;
+        while end > 0 && !content.is_char_boundary(end) {
+            end -= 1;
+        }
+        &content[..end]
     } else {
         content
     };
@@ -88,20 +97,10 @@ pub fn extract_tokens(content: &str, structures: &AttackStructures) -> Vec<Strin
         .map(|m| m.as_str().to_owned())
         .collect();
 
-    let mut special_count = 0;
-
+    // matches Python [:10] per attack_structure (semantic.py:103)
     for re in structures.compiled() {
-        for m in re.find_iter(content) {
+        for m in re.find_iter(content).take(10) {
             tokens.push(m.as_str().to_owned());
-            special_count += 1;
-
-            if special_count >= 50 {
-                break;
-            }
-        }
-
-        if special_count >= 50 {
-            break;
         }
     }
 
@@ -110,7 +109,10 @@ pub fn extract_tokens(content: &str, structures: &AttackStructures) -> Vec<Strin
 }
 
 /// Shannon entropy of byte distribution, in bits.
-#[doc(hidden)]
+///
+/// Differs from Python `Counter(content)` which counts code points.
+/// Bytes are faster (fixed 256 array) and good enough for obfuscation
+/// detection. Documented in CHANGELOG "Known differences from Python".
 #[must_use]
 pub fn calculate_entropy(content: &str) -> f64 {
     if content.is_empty() {
@@ -118,7 +120,12 @@ pub fn calculate_entropy(content: &str) -> f64 {
     }
 
     let content = if content.len() > MAX_ENTROPY_LENGTH {
-        &content[..MAX_ENTROPY_LENGTH]
+        // truncate at char boundary to keep substring valid UTF-8
+        let mut end = MAX_ENTROPY_LENGTH;
+        while end > 0 && !content.is_char_boundary(end) {
+            end -= 1;
+        }
+        &content[..end]
     } else {
         content
     };
@@ -141,7 +148,6 @@ pub fn calculate_entropy(content: &str) -> f64 {
 }
 
 /// Count encoding layers present (URL, base64, hex, unicode escape, HTML entity).
-#[doc(hidden)]
 #[must_use]
 pub fn detect_encoding_layers(content: &str) -> u32 {
     let content = if content.len() > MAX_SCAN_LENGTH {
@@ -157,41 +163,25 @@ pub fn detect_encoding_layers(content: &str) -> u32 {
 }
 
 #[doc(hidden)]
+#[must_use]
 pub fn analyze_attack_probability(
     content: &str,
     keywords: &AttackKeywords,
     structures: &AttackStructures,
 ) -> HashMap<&'static str, f64> {
     let tokens = extract_tokens(content, structures);
-    let token_set: std::collections::HashSet<&str> = tokens.iter().map(String::as_str).collect();
-
-    let mut probabilities = HashMap::new();
-
-    for (&attack_type, kw_set) in keywords.all() {
-        if kw_set.is_empty() {
-            probabilities.insert(attack_type, 0.0);
-            continue;
-        }
-
-        let matches = token_set.iter().filter(|t| kw_set.contains(**t)).count();
-        let base = matches as f64 / kw_set.len() as f64;
-        let boost = structural_boost(attack_type, content);
-
-        probabilities.insert(attack_type, (base + boost).min(1.0));
-    }
-
-    probabilities
+    attack_probability_with_tokens(content, &tokens, keywords)
 }
 
-#[doc(hidden)]
+/// Heuristic check for obfuscated content based on entropy, encoding
+/// layer count, special character ratio, and long unbroken sequences.
+#[must_use]
 pub fn detect_obfuscation(content: &str) -> bool {
-    calculate_entropy(content) > 4.5
-        || detect_encoding_layers(content) > 2
-        || {
-            let special_count = SPECIAL_CHAR.find_iter(content).count();
-            special_count as f64 / content.len().max(1) as f64 > 0.4
-        }
-        || LONG_RUN.is_match(content)
+    obfuscation_with_inputs(
+        content,
+        calculate_entropy(content),
+        detect_encoding_layers(content),
+    )
 }
 
 #[doc(hidden)]
@@ -203,12 +193,13 @@ pub fn extract_suspicious_patterns(
     structures
         .named()
         .iter()
-        .flat_map(|(name, re)| {
+        .flat_map(|&(name, ref re)| {
             re.find_iter(content).map(move |m| {
-                let ctx_start = m.start().saturating_sub(20);
-                let ctx_end = (m.end() + 20).min(content.len());
+                let ctx_start = floor_boundary(content, m.start().saturating_sub(20));
+                let ctx_end = ceil_boundary(content, m.end() + 20);
+
                 SuspiciousPattern {
-                    pattern_type: (*name).to_owned(),
+                    pattern_type: name,
                     matched: m.as_str().to_owned(),
                     position: m.start(),
                     context: content[ctx_start..ctx_end].to_owned(),
@@ -229,7 +220,8 @@ pub fn analyze_code_injection_risk(content: &str) -> f64 {
 ///
 /// Computes attack probabilities, entropy, encoding layers, obfuscation
 /// detection, suspicious pattern extraction, and code injection risk in
-/// a single pass.
+/// a single pass. Each shared computation (tokens, entropy, encoding
+/// layers) runs exactly once.
 #[must_use]
 pub fn analyze(
     content: &str,
@@ -237,14 +229,18 @@ pub fn analyze(
     structures: &AttackStructures,
 ) -> AnalysisResult {
     let tokens = extract_tokens(content, structures);
+    let entropy = calculate_entropy(content);
+    let encoding_layers = detect_encoding_layers(content);
+    let token_count = tokens.len();
+
     AnalysisResult {
-        attack_probabilities: analyze_attack_probability(content, keywords, structures),
-        entropy: calculate_entropy(content),
-        encoding_layers: detect_encoding_layers(content),
-        is_obfuscated: detect_obfuscation(content),
+        attack_probabilities: attack_probability_with_tokens(content, &tokens, keywords),
+        entropy,
+        encoding_layers,
+        is_obfuscated: obfuscation_with_inputs(content, entropy, encoding_layers),
         suspicious_patterns: extract_suspicious_patterns(content, structures),
         code_injection_risk: analyze_code_injection_risk(content),
-        token_count: tokens.len(),
+        token_count,
     }
 }
 
@@ -253,6 +249,7 @@ pub fn analyze(
 ///
 /// Weights: attack probability 30%, obfuscation 20%, encoding layers 10-20%,
 /// code injection risk 20%, suspicious pattern count 5-10%.
+#[must_use]
 pub fn get_threat_score(result: &AnalysisResult) -> f64 {
     let mut score = 0.0;
 
@@ -280,6 +277,42 @@ pub fn get_threat_score(result: &AnalysisResult) -> f64 {
     }
 
     score.min(1.0)
+}
+
+// caller already has tokens
+fn attack_probability_with_tokens(
+    content: &str,
+    tokens: &[String],
+    keywords: &AttackKeywords,
+) -> HashMap<&'static str, f64> {
+    let token_set: std::collections::HashSet<&str> = tokens.iter().map(String::as_str).collect();
+    let mut probabilities = HashMap::new();
+
+    for (&attack_type, kw_set) in keywords.all() {
+        if kw_set.is_empty() {
+            probabilities.insert(attack_type, 0.0);
+            continue;
+        }
+
+        let matches = token_set.iter().filter(|t| kw_set.contains(**t)).count();
+        let base = matches as f64 / kw_set.len() as f64;
+        let boost = structural_boost(attack_type, content);
+
+        probabilities.insert(attack_type, (base + boost).min(1.0));
+    }
+
+    probabilities
+}
+
+// caller already has entropy + encoding_layers
+fn obfuscation_with_inputs(content: &str, entropy: f64, encoding_layers: u32) -> bool {
+    entropy > 4.5
+        || encoding_layers > 2
+        || {
+            let special_count = SPECIAL_CHAR.find_iter(content).count();
+            special_count as f64 / content.len().max(1) as f64 > 0.4
+        }
+        || LONG_RUN.is_match(content)
 }
 
 fn structural_boost(attack_type: &str, content: &str) -> f64 {
@@ -427,13 +460,13 @@ mod tests {
             is_obfuscated: true,
             suspicious_patterns: vec![
                 SuspiciousPattern {
-                    pattern_type: "tag_like".into(),
+                    pattern_type: "tag_like",
                     matched: "<script>".into(),
                     position: 0,
                     context: "<script>".into(),
                 },
                 SuspiciousPattern {
-                    pattern_type: "function_call".into(),
+                    pattern_type: "function_call",
                     matched: "alert(1)".into(),
                     position: 8,
                     context: "alert(1)".into(),
@@ -442,6 +475,7 @@ mod tests {
             code_injection_risk: 0.5,
             token_count: 10,
         };
+
         let score = get_threat_score(&result);
         assert!(score > 0.5);
         assert!(score <= 1.0);
@@ -603,5 +637,25 @@ mod tests {
         let layers = detect_encoding_layers(content);
         assert!(layers > 2);
         assert!(detect_obfuscation(content));
+    }
+
+    #[test]
+    fn extract_suspicious_patterns_multibyte_no_panic() {
+        // emoji on each side of <script> so context window (±20) lands mid-codepoint
+        let pad = "\u{1F600}".repeat(8); // 32 bytes
+        let content = format!("{pad}<script>alert(1)</script>{pad}");
+        let patterns = extract_suspicious_patterns(&content, &st());
+        for p in &patterns {
+            assert!(content.is_char_boundary(p.position));
+        }
+        assert!(!patterns.is_empty());
+    }
+
+    #[test]
+    fn analyze_multibyte_no_panic() {
+        let pad = "\u{1F600}".repeat(8);
+        let content = format!("{pad}<script>alert(1)</script>{pad}");
+        let result = analyze(&content, &kw(), &st());
+        assert!(result.token_count > 0);
     }
 }

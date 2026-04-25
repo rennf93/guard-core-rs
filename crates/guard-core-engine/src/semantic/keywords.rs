@@ -3,10 +3,18 @@ use std::collections::HashSet;
 
 /// Keyword sets per attack category (xss, sql, command, path, template).
 ///
-/// Used by [`crate::analyze_attack_probability`] for base score calculation.
+/// Used by [`super::analyze_attack_probability`] for base score calculation.
 /// Construct with `Default::default()` for the built-in keyword tables.
 pub struct AttackKeywords {
     categories: HashMap<&'static str, HashSet<&'static str>>,
+}
+
+impl AttackKeywords {
+    /// All categories as `name -> keyword set` map.
+    #[must_use]
+    pub const fn all(&self) -> &HashMap<&'static str, HashSet<&'static str>> {
+        &self.categories
+    }
 }
 
 impl Default for AttackKeywords {
@@ -90,12 +98,5 @@ impl Default for AttackKeywords {
             ),
         ]);
         Self { categories }
-    }
-}
-
-impl AttackKeywords {
-    #[must_use]
-    pub const fn all(&self) -> &HashMap<&'static str, HashSet<&'static str>> {
-        &self.categories
     }
 }

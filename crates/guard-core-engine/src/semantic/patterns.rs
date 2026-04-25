@@ -3,10 +3,23 @@ use regex::Regex;
 /// Compiled structural regexes that detect attack syntax (HTML tags, function
 /// calls, command chains, path traversal, URLs).
 ///
-/// Used by [`crate::extract_suspicious_patterns`] and token extraction.
+/// Used by [`super::extract_suspicious_patterns`] and token extraction.
 /// Construct with `Default::default()` for the built-in pattern set.
 pub struct AttackStructures {
     named: Vec<(&'static str, Regex)>,
+}
+
+impl AttackStructures {
+    /// Named (category, regex) pairs.
+    #[must_use]
+    pub fn named(&self) -> &[(&'static str, Regex)] {
+        &self.named
+    }
+
+    /// Iterate compiled regexes only (no category names).
+    pub fn compiled(&self) -> impl Iterator<Item = &Regex> {
+        self.named.iter().map(|(_, re)| re)
+    }
 }
 
 impl Default for AttackStructures {
@@ -25,16 +38,5 @@ impl Default for AttackStructures {
             .collect();
 
         Self { named }
-    }
-}
-
-impl AttackStructures {
-    #[must_use]
-    pub fn named(&self) -> &[(&'static str, Regex)] {
-        &self.named
-    }
-
-    pub fn compiled(&self) -> impl Iterator<Item = &Regex> {
-        self.named.iter().map(|(_, re)| re)
     }
 }
