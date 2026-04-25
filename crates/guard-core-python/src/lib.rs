@@ -1,11 +1,14 @@
+// PyO3 #[pyfunction] docstrings become Python __doc__. They are written in
+// numpy style (Parameters/Returns/Raises sections), which trips clippy's
+// doc_markdown lint on bare identifiers. The lint targets rustdoc, not Python
+// hover text, so silence it crate-wide.
 #![allow(clippy::doc_markdown)]
 
-use std::collections::HashMap;
-
-use guard_core_engine::preprocessor as preprocessor;
-use guard_core_engine::semantic as semantic;
+use guard_core_engine::preprocessor;
+use guard_core_engine::semantic;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
+use pyo3::types::PyList;
 
 /// Preprocess content: unicode normalization, URL/HTML decode, null byte
 /// removal, whitespace collapsing, attack-preserving truncation.
@@ -94,18 +97,16 @@ fn analyze(py: Python<'_>, content: &str) -> PyResult<Py<PyDict>> {
     dict.set_item("code_injection_risk", result.code_injection_risk)?;
     dict.set_item("token_count", result.token_count)?;
 
-    let patterns: Vec<HashMap<&str, String>> = result
-        .suspicious_patterns
-        .iter()
-        .map(|p| {
-            HashMap::from([
-                ("type", p.pattern_type.clone()),
-                ("pattern", p.matched.clone()),
-                ("position", p.position.to_string()),
-                ("context", p.context.clone()),
-            ])
-        })
-        .collect();
+    let patterns = PyList::empty(py);
+
+    for p in &result.suspicious_patterns {
+        let d = PyDict::new(py);
+        d.set_item("type", &p.pattern_type)?;
+        d.set_item("pattern", &p.matched)?;
+        d.set_item("position", p.position)?;
+        d.set_item("context", &p.context)?;
+        patterns.append(d)?;
+    }
 
     dict.set_item("suspicious_patterns", patterns)?;
 
@@ -212,18 +213,22 @@ fn validate_pattern_safety(pattern: &str) -> (bool, &'static str) {
 ///     Threat scores between 0.0 and 1.0 for each input.
 #[pyfunction]
 #[pyo3(signature = (contents, max_length=10_000))]
-fn batch_threat_scores(contents: Vec<String>, max_length: usize) -> Vec<f64> {
-    let keywords = semantic::AttackKeywords::default();
-    let structures = semantic::AttackStructures::default();
+fn batch_threat_scores(py: Python<'_>, contents: Vec<String>, max_length: usize) -> Vec<f64> {
+    // release GIL during batch,
+    // pure Rust work, no Python state touched
+    py.detach(|| {
+        let keywords = semantic::AttackKeywords::default();
+        let structures = semantic::AttackStructures::default();
 
-    contents
-        .iter()
-        .map(|content| {
-            let preprocessed = preprocessor::preprocess(content.as_str(), max_length, true);
-            let result = semantic::analyze(&preprocessed, &keywords, &structures);
-            semantic::get_threat_score(&result)
-        })
-        .collect()
+        contents
+            .iter()
+            .map(|content| {
+                let preprocessed = preprocessor::preprocess(content.as_str(), max_length, true);
+                let result = semantic::analyze(&preprocessed, &keywords, &structures);
+                semantic::get_threat_score(&result)
+            })
+            .collect()
+    })
 }
 
 #[pymodule]
