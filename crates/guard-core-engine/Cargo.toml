@@ -6,7 +6,7 @@ edition = { workspace = true }
 rust-version = { workspace = true }
 
 [dependencies]
-htmlescape = { workspace = true }
+html-escape = { workspace = true }
 lru = { workspace = true }
 percent-encoding = { workspace = true }
 regex = { workspace = true }
