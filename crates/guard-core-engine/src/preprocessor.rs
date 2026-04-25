@@ -3,6 +3,9 @@ use std::sync::LazyLock;
 use regex::Regex;
 use unicode_normalization::UnicodeNormalization;
 
+use crate::util::ceil_boundary;
+use crate::util::floor_boundary;
+
 // visually ambiguous unicode chars mapped to their ASCII equivalents
 const LOOKALIKES: &[(char, &str)] = &[
     ('\u{2044}', "/"),
@@ -106,9 +109,9 @@ pub fn decode_common_encodings(content: &str) -> String {
             current = decoded;
         }
 
-        let unescaped = htmlescape::decode_html(&current).unwrap_or_else(|_| current.clone());
+        let unescaped = html_escape::decode_html_entities(&current);
         if unescaped != current {
-            current = unescaped;
+            current = unescaped.into_owned();
         }
 
         if current == before {
@@ -128,8 +131,8 @@ pub fn extract_attack_regions(content: &str, max_content_length: usize) -> Vec<(
 
     for indicator in ATTACK_INDICATORS.iter() {
         for m in indicator.find_iter(content) {
-            let start = m.start().saturating_sub(100);
-            let end = (m.end() + 100).min(content.len());
+            let start = floor_boundary(content, m.start().saturating_sub(100));
+            let end = ceil_boundary(content, m.end() + 100);
             regions.push((start, end));
 
             if regions.len() >= max_regions {
@@ -169,8 +172,9 @@ pub fn truncate_safely(content: &str, max_length: usize, preserve_attacks: bool)
 
     for &(start, end) in &regions {
         let take = (end - start).min(budget);
-        attack_slices.push(&content[start..start + take]);
-        budget -= take;
+        let slice_end = floor_boundary(content, start + take);
+        attack_slices.push(&content[start..slice_end]);
+        budget -= slice_end - start;
 
         if budget == 0 {
             break;
@@ -184,8 +188,9 @@ pub fn truncate_safely(content: &str, max_length: usize, preserve_attacks: bool)
         for &(start, end) in &regions {
             if last_end < start && budget > 0 {
                 let take = (start - last_end).min(budget);
-                gap_slices.push(&content[last_end..last_end + take]);
-                budget -= take;
+                let slice_end = floor_boundary(content, last_end + take);
+                gap_slices.push(&content[last_end..slice_end]);
+                budget -= slice_end - last_end;
             }
 
             last_end = end;
@@ -223,6 +228,7 @@ pub fn preprocess(content: &str, max_length: usize, preserve_attacks: bool) -> S
     result = remove_null_bytes(&result);
     result = collapse_whitespace(&result);
     result = truncate_safely(&result, max_length, preserve_attacks);
+
     result
 }
 
@@ -230,13 +236,7 @@ fn safe_truncate(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         return s.to_owned();
     }
-
-    let mut end = max_len;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-
-    s[..end].to_owned()
+    s[..floor_boundary(s, max_len)].to_owned()
 }
 
 fn merge_regions(regions: &mut Vec<(usize, usize)>) {
@@ -255,7 +255,7 @@ fn merge_regions(regions: &mut Vec<(usize, usize)>) {
             regions[write] = regions[read];
         }
     }
-    
+
     regions.truncate(write + 1);
 }
 
@@ -545,5 +545,33 @@ mod tests {
         let processed = preprocess(&attack, 10000, true);
         assert!(processed.contains("<script>"));
         assert!(processed.len() <= 10000);
+    }
+
+    // regression: multi-byte content at region edges must not panic
+    #[test]
+    fn extract_attack_regions_multibyte_no_panic() {
+        let pad = "\u{1F600}".repeat(40); // 40 emoji = 160 bytes
+        let content = format!("{pad}<script>alert(1)</script>{pad}");
+        let regions = extract_attack_regions(&content, 10_000);
+        for &(s, e) in &regions {
+            assert!(content.is_char_boundary(s), "start {s} not boundary");
+            assert!(content.is_char_boundary(e), "end {e} not boundary");
+        }
+    }
+
+    #[test]
+    fn truncate_safely_multibyte_no_panic() {
+        let pad = "\u{1F600}".repeat(40);
+        let content = format!("{pad}<script>alert(1)</script>{pad}");
+        let result = truncate_safely(&content, 100, true);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn preprocess_multibyte_no_panic() {
+        let pad = "\u{1F600}".repeat(50);
+        let content = format!("{pad}<script>alert(1)</script>{pad}");
+        let result = preprocess(&content, 200, true);
+        assert!(!result.is_empty());
     }
 }
