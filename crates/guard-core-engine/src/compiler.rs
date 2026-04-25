@@ -21,33 +21,41 @@ pub struct PatternCache {
 }
 
 impl PatternCache {
+    /// Create a new cache. Capacity is clamped to 1..=5000.
     #[must_use]
     pub fn new(capacity: usize) -> Self {
         let cap = capacity.clamp(1, 5000);
         Self {
-            cache: LruCache::new(NonZeroUsize::new(cap).expect("clamped above zero")),
+            // capacity is clamped to >= 1 above
+            cache: NonZeroUsize::new(cap).map_or_else(
+                || unreachable!("clamp(1, 5000) cannot return 0"),
+                LruCache::new,
+            ),
         }
     }
 
     /// Retrieve from cache or compile and insert. LRU eviction on overflow.
     pub fn get_or_compile(&mut self, pattern: &str) -> Result<&Regex, regex::Error> {
-        if !self.cache.contains(pattern) {
-            let compiled = Regex::new(&format!("(?im){pattern}"))?;
-            self.cache.put(pattern.to_owned(), compiled);
-        }
-
-        Ok(self.cache.get(pattern).expect("clamped above zero"))
+        // single hash lookup via try_get_or_insert_mut (lru 0.17+)
+        self.cache
+            .try_get_or_insert_mut(pattern.to_owned(), || {
+                Regex::new(&format!("(?im){pattern}"))
+            })
+            .map(|r| &*r)
     }
 
+    /// Drop all cached entries.
     pub fn clear(&mut self) {
         self.cache.clear();
     }
 
+    /// Number of currently cached patterns.
     #[must_use]
     pub fn len(&self) -> usize {
         self.cache.len()
     }
 
+    /// `true` if no patterns are cached.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.cache.is_empty()
@@ -64,14 +72,14 @@ pub fn compile(pattern: &str) -> Result<Regex, regex::Error> {
 ///
 /// Rust's `regex` crate uses finite automata and is inherently ReDoS-safe,
 /// but this flags patterns that would be dangerous in other engines.
-/// Returns `(is_safe, reason)`.
+/// On match, the returned reason names the specific dangerous construct.
 #[must_use]
 pub fn validate_pattern_safety(pattern: &str) -> (bool, &'static str) {
-    for dangerous in DANGEROUS_PATTERNS {
+    for &dangerous in DANGEROUS_PATTERNS {
         if let Ok(checker) = Regex::new(dangerous)
             && checker.is_match(pattern)
         {
-            return (false, "pattern contains dangerous backtracking construct");
+            return (false, dangerous);
         }
     }
 
