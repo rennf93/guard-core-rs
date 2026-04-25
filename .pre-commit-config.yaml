@@ -36,6 +36,8 @@ repos:
 
       - id: forbidden-allow-attr
         name: forbidden #[allow(...)] attribute
+        # only catches outer #[allow(...)]; inner #![allow(...)] (crate-level) is
+        # justified case-by-case and noted at the call site
         entry: '#\[allow\('
         language: pygrep
         types: [rust]

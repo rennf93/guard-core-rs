@@ -5,20 +5,20 @@ Date: 2026-04-22
 
 ## Full Pipeline (preprocess + semantic analysis + threat score)
 
-| Payload | Python (us) | Rust (us) | Speedup |
-|---|---:|---:|---:|
-| clean_get | 1,320 | 10.1 | **131x** |
-| clean_json | 1,338 | 10.0 | **134x** |
-| xss_basic | 1,208 | 9.7 | **124x** |
-| xss_bypass (zero-width chars) | 1,201 | 8.8 | **136x** |
-| sqli_union | 1,250 | 9.5 | **132x** |
-| sqli_encoded (URL-encoded keywords) | 1,208 | 9.3 | **130x** |
-| cmd_injection | 1,259 | 9.6 | **131x** |
-| path_traversal | 1,189 | 9.6 | **124x** |
-| template_injection | 1,265 | 11.8 | **107x** |
-| double_encoded | 1,239 | 11.1 | **112x** |
-| mixed_attack (XSS + SQLi) | 1,246 | 12.5 | **100x** |
-| **100 mixed requests (batch)** | **153,592** | **855** | **180x** |
+| Payload                             | Python (us) | Rust (us) |  Speedup |
+| ----------------------------------- | ----------: | --------: | -------: |
+| clean_get                           |       1,320 |      10.1 | **131x** |
+| clean_json                          |       1,338 |      10.0 | **134x** |
+| xss_basic                           |       1,208 |       9.7 | **124x** |
+| xss_bypass (zero-width chars)       |       1,201 |       8.8 | **136x** |
+| sqli_union                          |       1,250 |       9.5 | **132x** |
+| sqli_encoded (URL-encoded keywords) |       1,208 |       9.3 | **130x** |
+| cmd_injection                       |       1,259 |       9.6 | **131x** |
+| path_traversal                      |       1,189 |       9.6 | **124x** |
+| template_injection                  |       1,265 |      11.8 | **107x** |
+| double_encoded                      |       1,239 |      11.1 | **112x** |
+| mixed_attack (XSS + SQLi)           |       1,246 |      12.5 | **100x** |
+| **100 mixed requests (batch)**      | **153,592** |   **855** | **180x** |
 
 ### Summary
 
@@ -41,17 +41,17 @@ Per-call through PyO3:
 
 ```
 Python -> GIL acquire -> argument conversion -> Rust (10us) -> dict construction -> GIL release -> Python
-         ~500us overhead                        ~10us work      ~200us overhead
+          ~500us overhead                       ~10us work     ~200us overhead
 ```
 
 Each FFI crossing costs ~700us. The Rust work is 10us. **98% of the time is spent crossing the boundary, not doing work.** This is inherent to CPython's FFI model.
 
-| Mode | What happens | Per request | vs Python |
-|---|---|---:|---:|
-| Python pure | everything in Python | 1,250 us | baseline |
-| Rust+PyO3 per-call | one FFI crossing per request | 750 us | **2x** |
-| Rust+PyO3 batch | one FFI crossing for N requests | 12.8 us | **~100x** |
-| Rust pure (criterion) | no Python involved | 10 us | **~125x** |
+| Mode                  | What happens                    | Per request | vs Python |
+| --------------------- | ------------------------------- | ----------: | --------: |
+| Python pure           | everything in Python            |    1,250 us |  baseline |
+| Rust+PyO3 per-call    | one FFI crossing per request    |      750 us |    **2x** |
+| Rust+PyO3 batch       | one FFI crossing for N requests |     12.8 us | **~100x** |
+| Rust pure (criterion) | no Python involved              |       10 us | **~125x** |
 
 ### When each mode makes sense
 
