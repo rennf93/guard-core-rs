@@ -1,5 +1,5 @@
 [package]
-name = "guard-core"
+name = "guard-core-rs"
 version = "0.0.1"
 authors = { workspace = true }
 categories = { workspace = true }

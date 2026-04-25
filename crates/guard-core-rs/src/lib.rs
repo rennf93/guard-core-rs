@@ -7,20 +7,19 @@
 //!
 //! Re-exports the detection engine modules:
 //!
-//! - [`compiler`] - regex pattern compilation with LRU caching and ReDoS
-//!   safety validation
-//! - [`preprocessor`] - unicode NFKC normalization, URL/HTML decoding,
-//!   null byte removal, whitespace collapsing, and attack-preserving
-//!   truncation
-//! - [`semantic`] - token extraction, Shannon entropy, encoding layer
-//!   detection, attack probability scoring, obfuscation detection, code
-//!   injection risk analysis, and aggregate threat scoring
+//! - [`compiler`] - regex pattern compilation with LRU caching and ReDoS safety validation
+//! - [`preprocessor`] - unicode NFKC normalization, URL/HTML decoding, null byte removal,
+//!   whitespace collapsing, and attack-preserving truncation
+//! - [`semantic`] - token extraction, Shannon entropy, encoding layer detection, attack probability
+//!   scoring, obfuscation detection, code injection risk analysis, and aggregate threat scoring
 //!
 //! # Usage
 //!
 //! ```
-//! use guard_core::preprocessor;
-//! use guard_core::semantic::{self, AttackKeywords, AttackStructures};
+//! use guard_core_rs::preprocessor;
+//! use guard_core_rs::semantic::AttackKeywords;
+//! use guard_core_rs::semantic::AttackStructures;
+//! use guard_core_rs::semantic::{self};
 //!
 //! let raw = "<scr\u{200B}ipt>alert(1)</script>";
 //! let clean = preprocessor::preprocess(raw, 10_000, true);

@@ -9,11 +9,11 @@ authors = [
     "MihaiStreames <72852703+MihaiStreames@users.noreply.github.com>",
 ]
 categories = ["web-programming"]
-documentation = "https://docs.rs/guard-core"
+documentation = "https://docs.rs/guard-core-rs"
 edition = "2024"
 homepage = "https://github.com/rennf93/guard-core-rs"
 keywords = ["security", "middleware", "api", "detection-engine", "waf"]
-license = "MIT"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/rennf93/guard-core-rs"
 rust-version = "1.92"
 
@@ -22,11 +22,11 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [workspace.dependencies]
-guard-core = { path = "crates/guard-core" }
+guard-core-rs = { path = "crates/guard-core-rs" }
 guard-core-engine = { path = "crates/guard-core-engine" }
 
 criterion = { version = "0.8.2", default-features = false }
-htmlescape = "0.3.1"
+html-escape = "0.2.13"
 lru = "0.17.0"
 percent-encoding = "2.3.2"
 pyo3 = { version = "0.28.3", features = ["extension-module"] }

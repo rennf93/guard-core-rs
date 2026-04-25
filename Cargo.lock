@@ -182,13 +182,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
-name = "guard-core"
-version = "0.0.1"
-dependencies = [
- "guard-core-engine",
-]
-
-[[package]]
 name = "guard-core-benchmark"
 version = "0.0.1"
 dependencies = [
@@ -200,7 +193,7 @@ dependencies = [
 name = "guard-core-engine"
 version = "0.0.1"
 dependencies = [
- "htmlescape",
+ "html-escape",
  "lru",
  "percent-encoding",
  "regex",
@@ -213,6 +206,13 @@ version = "0.0.1"
 dependencies = [
  "guard-core-engine",
  "pyo3",
+]
+
+[[package]]
+name = "guard-core-rs"
+version = "0.0.1"
+dependencies = [
+ "guard-core-engine",
 ]
 
 [[package]]
@@ -244,10 +244,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "htmlescape"
-version = "0.3.1"
+name = "html-escape"
+version = "0.2.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9025058dae765dee5070ec375f591e2ba14638c63feff74f13805a72e523163"
+checksum = "6d1ad449764d627e22bfd7cd5e8868264fc9236e07c752972b4080cd351cb476"
+dependencies = [
+ "utf8-width",
+]
 
 [[package]]
 name = "itertools"
@@ -547,6 +550,12 @@ checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
 dependencies = [
  "tinyvec",
 ]
+
+[[package]]
+name = "utf8-width"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1292c0d970b54115d14f2492fe0170adf21d68a1de108eebc51c1df4f346a091"
 
 [[package]]
 name = "walkdir"
