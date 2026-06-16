@@ -34,7 +34,10 @@ impl Default for AttackStructures {
 
         let named = definitions
             .iter()
-            .filter_map(|&(name, pat)| Regex::new(&format!("(?i){pat}")).ok().map(|re| (name, re)))
+            .map(|&(name, pat)| {
+                let re = Regex::new(&format!("(?i){pat}")).expect("static pattern must compile");
+                (name, re)
+            })
             .collect();
 
         Self { named }

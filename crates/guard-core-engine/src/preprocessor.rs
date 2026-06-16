@@ -3,9 +3,6 @@ use std::sync::LazyLock;
 use regex::Regex;
 use unicode_normalization::UnicodeNormalization;
 
-use crate::util::ceil_boundary;
-use crate::util::floor_boundary;
-
 // visually ambiguous unicode chars mapped to their ASCII equivalents
 const LOOKALIKES: &[(char, &str)] = &[
     ('\u{2044}', "/"),
@@ -56,7 +53,10 @@ static ATTACK_INDICATORS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         r"\\x[0-9a-fA-F]{2}",
         r"%[0-9a-fA-F]{2}",
     ];
-    patterns.iter().filter_map(|p| Regex::new(p).ok()).collect()
+    patterns
+        .iter()
+        .map(|p| Regex::new(p).expect("static pattern must compile"))
+        .collect()
 });
 
 /// NFKC normalization + unicode lookalike replacement
@@ -93,13 +93,16 @@ pub fn remove_null_bytes(content: &str) -> String {
         .collect()
 }
 
-/// Iteratively URL-decode and HTML-unescape
-/// (up to 3 rounds to handle double/triple encoding).
+/// Iteratively URL-decode, HTML-unescape, hex/unicode-escape decode,
+/// base64-candidate decode, and SQL comment strip (up to 7 rounds).
+///
+/// Matches Python's 7-stage decode pipeline including SQL block/line comment
+/// stripping. Ports stages 1-7 from `guard_core/detection_engine/preprocessor.py`.
 #[must_use]
 pub fn decode_common_encodings(content: &str) -> String {
     let mut current = content.to_owned();
 
-    for _ in 0..3 {
+    for _ in 0..7 {
         let before = current.clone();
 
         let decoded = percent_encoding::percent_decode_str(&current)
@@ -114,11 +117,228 @@ pub fn decode_common_encodings(content: &str) -> String {
             current = unescaped.into_owned();
         }
 
+        current = decode_hex_escapes(&current);
+        current = decode_unicode_escapes(&current);
+        current = decode_base64_candidates(&current);
+        current = strip_sql_comments(&current);
+
         if current == before {
             break;
         }
     }
+
     current
+}
+
+fn decode_hex_escapes(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'\\'
+            && i + 3 < bytes.len()
+            && bytes[i + 1] == b'x'
+            && let Some(b) = from_hex2(bytes[i + 2], bytes[i + 3])
+        {
+            out.push(b as char);
+            i += 4;
+            continue;
+        }
+
+        let ch = s[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+
+    out
+}
+
+fn decode_unicode_escapes(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 5 < bytes.len() && bytes[i + 1] == b'u' {
+            let h = [bytes[i + 2], bytes[i + 3], bytes[i + 4], bytes[i + 5]];
+            if let Some(c) = from_hex4(h).and_then(char::from_u32) {
+                out.push(c);
+                i += 6;
+                continue;
+            }
+        }
+
+        let ch = s[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+
+    out
+}
+
+fn decode_base64_candidates(s: &str) -> String {
+    // 8+ non-padding chars = at least 6 decoded bytes; avoids short alphanumeric false positives
+    static B64_CANDIDATE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"[A-Za-z0-9+/]{8,}={0,2}").unwrap());
+
+    let mut out = String::with_capacity(s.len());
+    let mut last = 0;
+
+    for m in B64_CANDIDATE.find_iter(s) {
+        out.push_str(&s[last..m.start()]);
+        let candidate = m.as_str();
+        let pad_needed = candidate.len().next_multiple_of(4) - candidate.len();
+        let mut padded = candidate.to_owned();
+        padded.extend(std::iter::repeat_n('=', pad_needed));
+
+        if let Some(decoded) = try_base64_decode(&padded) {
+            out.push_str(&decoded);
+        } else {
+            out.push_str(candidate);
+        }
+
+        last = m.end();
+    }
+
+    out.push_str(&s[last..]);
+    out
+}
+
+/// Strip SQL block comments, including inner-word variants (`SEL/**/ECT`).
+/// Hand-rolled to avoid lookbehind (not supported by `regex` crate).
+fn strip_sql_comments(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+
+    while i < bytes.len() {
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            let before_letter = i > 0 && bytes[i - 1].is_ascii_alphabetic();
+            if let Some(close) = bytes[i + 2..].windows(2).position(|w| w == b"*/") {
+                let after_pos = i + 2 + close + 2;
+                let after_letter =
+                    after_pos < bytes.len() && bytes[after_pos].is_ascii_alphabetic();
+
+                // inner-word comment: letter/*...*/letter -> remove (no space)
+                // standalone comment: replace with space to avoid word-joining
+                if !(before_letter && after_letter) {
+                    out.push(' ');
+                }
+
+                i = after_pos;
+                continue;
+            }
+        }
+        if i + 1 < bytes.len() && bytes[i] == b'-' && bytes[i + 1] == b'-' {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if bytes[i] == b'#' {
+            while i < bytes.len() && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+
+        let ch = s[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+
+    out
+}
+
+fn from_hex2(hi: u8, lo: u8) -> Option<u8> {
+    let h = from_hex_digit(hi)?;
+    let l = from_hex_digit(lo)?;
+    Some((h << 4) | l)
+}
+
+fn from_hex4(digits: [u8; 4]) -> Option<u32> {
+    let mut v: u32 = 0;
+    for d in digits {
+        v = (v << 4) | u32::from(from_hex_digit(d)?);
+    }
+    Some(v)
+}
+
+const fn from_hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// 255 = invalid, 254 = padding (`=`)
+const B64_TABLE: [u8; 256] = {
+    let mut t = [255u8; 256];
+    let mut i = 0u8;
+    loop {
+        t[i as usize] = match i {
+            b'A'..=b'Z' => i - b'A',
+            b'a'..=b'z' => i - b'a' + 26,
+            b'0'..=b'9' => i - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => 254,
+            _ => 255,
+        };
+        if i == 255 {
+            break;
+        }
+        i += 1;
+    }
+    t
+};
+
+fn try_base64_decode(s: &str) -> Option<String> {
+    let bytes = s.as_bytes();
+    if !bytes.len().is_multiple_of(4) {
+        return None;
+    }
+
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let v = [
+            B64_TABLE[bytes[i] as usize],
+            B64_TABLE[bytes[i + 1] as usize],
+            B64_TABLE[bytes[i + 2] as usize],
+            B64_TABLE[bytes[i + 3] as usize],
+        ];
+        if v[0] == 255 || v[1] == 255 {
+            return None;
+        }
+
+        out.push((v[0] << 2) | (v[1] >> 4));
+        if v[2] != 254 {
+            if v[2] == 255 {
+                return None;
+            }
+            out.push((v[1] << 4) | (v[2] >> 2));
+        }
+        if v[3] != 254 {
+            if v[3] == 255 {
+                return None;
+            }
+            out.push((v[2] << 6) | v[3]);
+        }
+
+        i += 4;
+    }
+
+    // only replace if decoded content is printable ASCII (same heuristic as Python)
+    if out.iter().all(|&b| (0x20u8..0x7f).contains(&b)) {
+        String::from_utf8(out).ok()
+    } else {
+        None
+    }
 }
 
 /// Scan for attack indicator matches, returning merged `(start, end)`
@@ -131,8 +351,8 @@ pub fn extract_attack_regions(content: &str, max_content_length: usize) -> Vec<(
 
     for indicator in ATTACK_INDICATORS.iter() {
         for m in indicator.find_iter(content) {
-            let start = floor_boundary(content, m.start().saturating_sub(100));
-            let end = ceil_boundary(content, m.end() + 100);
+            let start = content.floor_char_boundary(m.start().saturating_sub(100));
+            let end = content.ceil_char_boundary(m.end() + 100);
             regions.push((start, end));
 
             if regions.len() >= max_regions {
@@ -172,7 +392,7 @@ pub fn truncate_safely(content: &str, max_length: usize, preserve_attacks: bool)
 
     for &(start, end) in &regions {
         let take = (end - start).min(budget);
-        let slice_end = floor_boundary(content, start + take);
+        let slice_end = content.floor_char_boundary(start + take);
         attack_slices.push(&content[start..slice_end]);
         budget -= slice_end - start;
 
@@ -188,7 +408,7 @@ pub fn truncate_safely(content: &str, max_length: usize, preserve_attacks: bool)
         for &(start, end) in &regions {
             if last_end < start && budget > 0 {
                 let take = (start - last_end).min(budget);
-                let slice_end = floor_boundary(content, last_end + take);
+                let slice_end = content.floor_char_boundary(last_end + take);
                 gap_slices.push(&content[last_end..slice_end]);
                 budget -= slice_end - last_end;
             }
@@ -236,7 +456,7 @@ fn safe_truncate(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         return s.to_owned();
     }
-    s[..floor_boundary(s, max_len)].to_owned()
+    s[..s.floor_char_boundary(max_len)].to_owned()
 }
 
 fn merge_regions(regions: &mut Vec<(usize, usize)>) {
@@ -264,20 +484,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn unicode_normalization_basic() {
+    fn unicode_normalization() {
         assert_eq!(normalize_unicode("\u{FF0F}"), "/");
         assert_eq!(normalize_unicode("\u{200B}test\u{200C}"), "test");
         assert_eq!(normalize_unicode("\u{FF1C}script\u{FF1E}"), "<script>");
+        // comprehensive lookalike table
+        for (input, expected) in [
+            ("\u{2044}", "/"),
+            ("\u{FF0F}", "/"),
+            ("\u{29F8}", "/"),
+            ("\u{0131}", "i"),
+            ("\u{200B}", ""),
+            ("\u{200C}", ""),
+            ("\u{200D}", ""),
+            ("\u{FEFF}", ""),
+            ("\u{00AD}", ""),
+            ("\u{037E}", ";"),
+            ("\u{FF1C}", "<"),
+            ("\u{FF1E}", ">"),
+        ] {
+            let result = normalize_unicode(&format!("test{input}test"));
+            assert_eq!(
+                result,
+                format!("test{expected}test"),
+                "failed for {input:?}"
+            );
+        }
+
+        // zero-width chars inside tag name
+        let malicious = format!(
+            "<script{}>{}alert(1){}/script>",
+            '\u{200B}', '\u{FF0F}', '\u{FF1C}'
+        );
+        assert_eq!(normalize_unicode(&malicious), "<script>/alert(1)</script>");
     }
 
     #[test]
-    fn unicode_zero_width_removal() {
-        let input = format!("<scr{}ipt>", '\u{200B}');
-        assert_eq!(normalize_unicode(&input), "<script>");
-    }
-
-    #[test]
-    fn whitespace_collapsing() {
+    fn whitespace_and_null_bytes() {
         assert_eq!(
             collapse_whitespace("test  multiple   spaces"),
             "test multiple spaces"
@@ -290,90 +533,109 @@ mod tests {
             collapse_whitespace("  leading trailing  "),
             "leading trailing"
         );
-    }
 
-    #[test]
-    fn null_byte_removal() {
         assert_eq!(remove_null_bytes("test\x00null\x00bytes"), "testnullbytes");
         assert_eq!(remove_null_bytes("test\x01\x02control"), "testcontrol");
+
         // preserves tab, newline, carriage return
-        assert_eq!(
-            remove_null_bytes("test\ttab\nnewline\rcarriage"),
-            "test\ttab\nnewline\rcarriage"
-        );
+        let safe = "test\ttab\nnewline\rcarriage";
+        assert_eq!(remove_null_bytes(safe), safe);
     }
 
     #[test]
-    fn url_decoding() {
+    fn decode_common_encodings_variants() {
+        // URL
         assert_eq!(decode_common_encodings("%3Cscript%3E"), "<script>");
-    }
-
-    #[test]
-    fn html_decoding() {
+        // HTML
         assert_eq!(decode_common_encodings("&lt;script&gt;"), "<script>");
-    }
-
-    #[test]
-    fn double_encoded() {
-        // %253C -> first pass: %3C -> second pass: <
+        // double-encoded: %253C -> %3C -> <
         assert_eq!(decode_common_encodings("%253Cscript%253E"), "<script>");
+        // URL-encoded HTML entity: %26lt%3B -> &lt; -> <
+        assert_eq!(
+            decode_common_encodings("%26lt%3Bscript%26gt%3B"),
+            "<script>"
+        );
+        // hex escape
+        assert_eq!(decode_common_encodings(r"\x3Cscript\x3E"), "<script>");
+        // SQL block comments
+        let r = decode_common_encodings("SEL/**/ECT * FR/**/OM users");
+        assert!(r.contains("SELECT") && r.contains("FROM"), "got: {r}");
+        // SQL line comment
+        assert!(!decode_common_encodings("' OR 1=1-- comment").contains("-- comment"));
     }
 
     #[test]
-    fn mixed_encoding() {
-        let result = decode_common_encodings("%26lt%3Bscript%26gt%3B");
-        assert_eq!(result, "<script>");
+    fn decode_helpers_standalone() {
+        assert_eq!(decode_hex_escapes(r"\x3Cscript\x3E"), "<script>");
+        // base64("<script>") = "PHNjcmlwdD4="
+        assert_eq!(decode_base64_candidates("PHNjcmlwdD4="), "<script>");
+        assert_eq!(
+            strip_sql_comments("SEL/**/ECT * FR/**/OM users"),
+            "SELECT * FROM users"
+        );
+        assert!(!strip_sql_comments("' OR 1=1-- comment").contains("-- comment"));
+        assert!(!strip_sql_comments("' OR 1=1# comment").contains("# comment"));
     }
 
     #[test]
-    fn attack_region_extraction() {
-        let content = "normal text <script>alert(1)</script> more text";
-        let regions = extract_attack_regions(content, 10000);
-        assert!(!regions.is_empty());
+    fn attack_regions() {
+        // detects attacks, clean content has none
+        assert!(
+            !extract_attack_regions("normal text <script>alert(1)</script> more text", 10000)
+                .is_empty()
+        );
+        assert!(extract_attack_regions("this is perfectly normal text", 10000).is_empty());
+
+        // two distant attacks produce two non-overlapping regions
+        let content = format!(
+            "<script>test</script>{}SELECT * FROM users",
+            "x".repeat(500)
+        );
+        let regions = extract_attack_regions(&content, 10000);
+        assert!(regions.len() >= 2);
+        assert!(regions[1].0 > regions[0].1);
     }
 
     #[test]
-    fn no_attack_regions_in_clean_content() {
-        let content = "this is perfectly normal text without any attack patterns";
-        let regions = extract_attack_regions(content, 10000);
-        assert!(regions.is_empty());
-    }
+    fn truncate_safely_variants() {
+        // no-op when under limit
+        assert_eq!(truncate_safely("short", 1000, true), "short");
+        // simple truncation
+        assert_eq!(truncate_safely(&"a".repeat(100), 50, false).len(), 50);
 
-    #[test]
-    fn truncate_short_content() {
-        let content = "short";
-        assert_eq!(truncate_safely(content, 1000, true), "short");
-    }
-
-    #[test]
-    fn truncate_without_preserve() {
-        let content = "a".repeat(100);
-        let result = truncate_safely(&content, 50, false);
-        assert_eq!(result.len(), 50);
-    }
-
-    #[test]
-    fn truncate_preserves_attack() {
-        // attack near the start so the context window captures it within budget
+        // preserve_attacks keeps script tag visible
         let content = format!(
             "{}  <script>alert(1)</script>  {}",
             "a".repeat(50),
             "b".repeat(500)
         );
-        let result = truncate_safely(&content, 200, true);
-        assert!(result.contains("script"));
-    }
+        assert!(truncate_safely(&content, 200, true).contains("script"));
 
-    #[test]
-    fn truncate_deeply_buried_attack() {
-        // attack deep in padding - with enough budget it should still be found
+        // buried attack
         let content = format!(
             "{}<script>alert(1)</script>{}",
             "a".repeat(500),
             "b".repeat(500)
         );
-        let result = truncate_safely(&content, 500, true);
-        assert!(result.contains("script"));
+        assert!(truncate_safely(&content, 500, true).contains("script"));
+
+        // multibyte: doesn't panic, result is non-empty
+        let pad = "\u{1F600}".repeat(40);
+        let content = format!("{pad}<script>alert(1)</script>{pad}");
+        assert!(!truncate_safely(&content, 100, true).is_empty());
+    }
+
+    #[test]
+    fn safe_truncate_multibyte() {
+        // emoji is 4 bytes — must not split it
+        assert_eq!(safe_truncate("hello\u{1F600}world", 6), "hello");
+    }
+
+    #[test]
+    fn merge_overlapping_regions() {
+        let mut regions = vec![(0, 10), (5, 15), (20, 30)];
+        merge_regions(&mut regions);
+        assert_eq!(regions, vec![(0, 15), (20, 30)]);
     }
 
     #[test]
@@ -399,179 +661,53 @@ mod tests {
     }
 
     #[test]
-    fn xss_bypass_attempt() {
+    fn preprocess_xss_bypass() {
         let input = format!(
             "<scr{}ipt>al{}ert(1)</sc{}ript>",
             '\u{200B}', '\u{200C}', '\u{200D}'
         );
-        let result = preprocess(&input, 10000, true);
-        assert!(result.contains("<script>alert(1)</script>"));
+        assert!(preprocess(&input, 10000, true).contains("<script>alert(1)</script>"));
     }
 
     #[test]
-    fn sql_injection_bypass() {
-        let result = preprocess("1' %55NION %53ELECT * FROM users--", 10000, true);
-        assert!(result.contains("UNION SELECT"));
-    }
-
-    #[test]
-    fn merge_overlapping_regions() {
-        let mut regions = vec![(0, 10), (5, 15), (20, 30)];
-        merge_regions(&mut regions);
-        assert_eq!(regions, vec![(0, 15), (20, 30)]);
-    }
-
-    #[test]
-    fn safe_truncate_multibyte() {
-        let content = "hello\u{1F600}world"; // emoji is 4 bytes
-        let result = safe_truncate(content, 6);
-        assert_eq!(result, "hello");
-    }
-
-    #[test]
-    fn normalize_lookalike_slash_variants() {
-        for (input, expected) in [
-            ("\u{2044}", "/"),
-            ("\u{FF0F}", "/"),
-            ("\u{29F8}", "/"),
-            ("\u{0131}", "i"),
-            ("\u{200B}", ""),
-            ("\u{200C}", ""),
-            ("\u{200D}", ""),
-            ("\u{FEFF}", ""),
-            ("\u{00AD}", ""),
-            ("\u{037E}", ";"),
-            ("\u{FF1C}", "<"),
-            ("\u{FF1E}", ">"),
-        ] {
-            let result = normalize_unicode(&format!("test{input}test"));
-            assert_eq!(
-                result,
-                format!("test{expected}test"),
-                "failed for input char"
-            );
-        }
-    }
-
-    #[test]
-    fn normalize_malicious_script() {
-        let malicious = format!(
-            "<script{}>{}alert(1){}/script>",
-            '\u{200B}', '\u{FF0F}', '\u{FF1C}'
-        );
-        let normalized = normalize_unicode(&malicious);
-        assert_eq!(normalized, "<script>/alert(1)</script>");
-    }
-
-    #[test]
-    fn whitespace_mixed() {
-        assert_eq!(
-            collapse_whitespace("  mixed\t \n  whitespace  "),
-            "mixed whitespace"
+    fn preprocess_sql_bypass() {
+        assert!(
+            preprocess("1' %55NION %53ELECT * FROM users--", 10000, true).contains("UNION SELECT")
         );
     }
 
     #[test]
-    fn null_bytes_preserves_safe_control() {
-        let content = "test\ttab\nnewline\rcarriage";
-        assert_eq!(remove_null_bytes(content), content);
-    }
-
-    #[test]
-    fn attack_region_non_overlapping() {
-        let content = format!(
-            "<script>test</script>{}SELECT * FROM users",
-            "x".repeat(500)
-        );
-        let regions = extract_attack_regions(&content, 10000);
-        assert!(regions.len() >= 2);
-        assert!(regions[1].0 > regions[0].1);
-    }
-
-    #[test]
-    fn attack_indicators_match_real_payloads() {
-        let test_content = "<script>alert(1)</script> SELECT * FROM users <?php eval() <iframe>";
-        let regions = extract_attack_regions(test_content, 10000);
-        assert!(!regions.is_empty());
-    }
-
-    #[test]
-    fn decode_iterations_double() {
-        // %253C -> %3C -> <
-        assert_eq!(decode_common_encodings("%253Cscript%253E"), "<script>");
-    }
-
-    #[test]
-    fn decode_html_then_url() {
-        assert_eq!(
-            decode_common_encodings("%26lt%3Bscript%26gt%3B"),
-            "<script>"
-        );
-    }
-
-    #[test]
-    fn preprocess_batch_equivalent() {
+    fn preprocess_batch_and_multibyte() {
+        // batch equivalence
         let inputs = ["<script>alert(1)</script>", "%3Cimg%3E", "normal text", ""];
         let results: Vec<String> = inputs.iter().map(|s| preprocess(s, 10000, true)).collect();
-        assert_eq!(results.len(), 4);
         assert_eq!(results[0], "<script>alert(1)</script>");
         assert!(results[1].contains("<img>"));
         assert_eq!(results[2], "normal text");
         assert_eq!(results[3], "");
-    }
 
-    #[test]
-    fn integration_padding_attack() {
-        let attack = format!(
-            "{}<script>alert(1)</script>{}",
-            "a".repeat(50),
-            "b".repeat(2000)
-        );
-        let result = preprocess(&attack, 200, true);
-        assert!(result.len() <= 200);
-        assert!(result.contains("script"));
-    }
-
-    #[test]
-    fn fullwidth_unicode_script() {
-        let content = "\u{FF53}\u{FF43}\u{FF52}\u{FF49}\u{FF50}\u{FF54}";
-        let processed = preprocess(content, 10000, true);
-        assert!(processed.to_lowercase().contains("script"));
-    }
-
-    #[test]
-    fn attack_truncation_preserves_tag() {
-        let attack = format!("<script>alert('xss')</script>{}", "a".repeat(10000));
-        let processed = preprocess(&attack, 10000, true);
-        assert!(processed.contains("<script>"));
-        assert!(processed.len() <= 10000);
-    }
-
-    // regression: multi-byte content at region edges must not panic
-    #[test]
-    fn extract_attack_regions_multibyte_no_panic() {
-        let pad = "\u{1F600}".repeat(40); // 40 emoji = 160 bytes
+        // multibyte content at region edges must not panic
+        let pad = "\u{1F600}".repeat(50);
         let content = format!("{pad}<script>alert(1)</script>{pad}");
-        let regions = extract_attack_regions(&content, 10_000);
-        for &(s, e) in &regions {
+        let r = preprocess(&content, 200, true);
+        assert!(!r.is_empty());
+
+        // attack region boundary chars must be valid
+        let pad = "\u{1F600}".repeat(40);
+        let content = format!("{pad}<script>alert(1)</script>{pad}");
+        for &(s, e) in &extract_attack_regions(&content, 10_000) {
             assert!(content.is_char_boundary(s), "start {s} not boundary");
             assert!(content.is_char_boundary(e), "end {e} not boundary");
         }
     }
 
     #[test]
-    fn truncate_safely_multibyte_no_panic() {
-        let pad = "\u{1F600}".repeat(40);
-        let content = format!("{pad}<script>alert(1)</script>{pad}");
-        let result = truncate_safely(&content, 100, true);
-        assert!(!result.is_empty());
-    }
-
-    #[test]
-    fn preprocess_multibyte_no_panic() {
-        let pad = "\u{1F600}".repeat(50);
-        let content = format!("{pad}<script>alert(1)</script>{pad}");
-        let result = preprocess(&content, 200, true);
-        assert!(!result.is_empty());
+    fn fullwidth_unicode_script() {
+        let content = "\u{FF53}\u{FF43}\u{FF52}\u{FF49}\u{FF50}\u{FF54}";
+        assert!(
+            preprocess(content, 10000, true)
+                .to_lowercase()
+                .contains("script")
+        );
     }
 }

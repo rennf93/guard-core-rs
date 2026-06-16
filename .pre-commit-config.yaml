@@ -1,38 +1,69 @@
+fail_fast: true
+
 repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+  - repo: builtin
     hooks:
       - id: trailing-whitespace
+        priority: 0
       - id: end-of-file-fixer
-      - id: check-merge-conflict
-      - id: check-added-large-files
-      - id: check-toml
-      - id: check-yaml
+        priority: 0
       - id: mixed-line-ending
         args: [--fix=lf]
+        priority: 0
+
+  - repo: https://github.com/zizmorcore/zizmor-pre-commit
+    rev: v1.25.2
+    hooks:
+      - id: zizmor
+        priority: 0
+
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: v3.8.3
+    hooks:
+      - id: prettier
+        types_or: [json, yaml]
+        priority: 2
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        priority: 2
+      - id: check-merge-conflict
+        priority: 2
 
   - repo: local
     hooks:
       - id: cargo-fmt
-        name: cargo +nightly fmt
-        entry: cargo +nightly fmt --all -- --check
+        name: cargo fmt
+        entry: cargo fmt --all
         language: system
         types: [rust]
         pass_filenames: false
+        priority: 2
 
       - id: cargo-clippy
         name: cargo clippy
-        entry: cargo clippy --workspace --all-targets --exclude guard-core-python -- -D warnings
+        entry: cargo clippy --fix --allow-dirty --workspace --all-targets --exclude guard-core-python -- -D warnings
         language: system
         types: [rust]
         pass_filenames: false
+        priority: 1
 
       - id: cargo-test
-        name: cargo test --no-run
-        entry: cargo test --workspace --no-run
+        name: cargo test
+        entry: cargo test --workspace --exclude guard-core-python
         language: system
         types: [rust]
         pass_filenames: false
+        priority: 0
+
+      - id: taplo
+        name: taplo fmt
+        entry: uvx taplo fmt
+        language: system
+        types: [toml]
+        priority: 1
 
       - id: forbidden-allow-attr
         name: forbidden #[allow(...)] attribute
@@ -42,3 +73,4 @@ repos:
         language: pygrep
         types: [rust]
         exclude: ^(tests/|fuzz/)
+        priority: 0

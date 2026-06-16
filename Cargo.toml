@@ -1,12 +1,12 @@
 [workspace]
-members = ["crates/*"]
-exclude = ["fuzz"]
+members  = ["crates/*"]
+exclude  = ["fuzz"]
 resolver = "3"
 
 [workspace.package]
 authors = [
-    "Renzo Franceschini <rennf93@users.noreply.github.com>",
-    "MihaiStreames <72852703+MihaiStreames@users.noreply.github.com>",
+  "Renzo Franceschini <rennf93@users.noreply.github.com>",
+  "MihaiStreames <72852703+MihaiStreames@users.noreply.github.com>",
 ]
 categories = ["web-programming"]
 documentation = "https://docs.rs/guard-core-rs"
@@ -22,13 +22,13 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [workspace.dependencies]
-guard-core-rs = { path = "crates/guard-core-rs" }
+guard-core-rs     = { path = "crates/guard-core-rs" }
 guard-core-engine = { path = "crates/guard-core-engine" }
 
-criterion = { version = "0.8.2", default-features = false }
-html-escape = "0.2.13"
-lru = "0.17.0"
-percent-encoding = "2.3.2"
-pyo3 = { version = "0.28.3", features = ["extension-module"] }
-regex = "1.12.3"
+criterion             = { version = "0.8.2", default-features = false }
+html-escape           = "0.2.13"
+lru                   = "0.18.0"
+percent-encoding      = "2.3.2"
+pyo3                  = { version = "0.29.0", features = ["extension-module", "abi3-py310"] }
+regex                 = "1.12.4"
 unicode-normalization = "0.1.25"

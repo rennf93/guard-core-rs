@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Show diff without applying'
+        description: "Show diff without applying"
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 permissions:
@@ -21,10 +21,12 @@ jobs:
   labeler:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
 
       - name: Sync labels from .github/labels.yml
-        uses: crazy-max/ghaction-github-labeler@v5
+        uses: crazy-max/ghaction-github-labeler@24d110aa46a59976b8a7f35518cb7f14f434c916 # v5.3.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           yaml-file: .github/labels.yml
