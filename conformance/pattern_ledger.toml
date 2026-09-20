@@ -1,0 +1,356 @@
+# Pattern translation ledger for spec 4.0.2.
+# Every distinct regex pattern firing in the vendored corpus (guard-core-spec-4.0.2/cases/) appears in exactly one state.
+# as_is: compiles unchanged with the regex crate.
+# translated: recorded corpus-verified translation; verified_on lists corpus cases whose recorded (match, position) evidence the translation reproduces.
+# residual: constructs the RE2-family regex crate rejects; no translation attempted. Input for the OPEN decision ledger-only vs ledger+fancy-regex; decide nothing here.
+spec_version = '4.0.2'
+
+[[as_is]]
+pattern = '<script[^>]*>[^<]*<\/script\s*>'
+category = 'xss'
+
+[[as_is]]
+pattern = '[;|&]\s*(?:ls|cat|rm|id|whoami|uname|wget|curl|nc|netcat|socat|bash|sh|python|perl)\b'
+category = 'cmd_injection'
+
+[[as_is]]
+pattern = '\$\((?:[^()\\\n]|\\.)*\)|\$\{(?:[^{}\\\n]|\\.)*\}'
+category = 'cmd_injection'
+
+[[as_is]]
+pattern = '\b(?:eval|system|exec|shell_exec|passthru|popen|proc_open|create_function)\s*\('
+category = 'cmd_injection'
+
+[[as_is]]
+pattern = '\bassert\s*\(\s*\$'
+category = 'cmd_injection'
+
+[[as_is]]
+pattern = '(?:\.\.\/|\.\.\\)(?:\.\.\/|\.\.\\)+'
+category = 'dir_traversal'
+
+[[as_is]]
+pattern = '(?i)UNION\s+(?:ALL\s+)?SELECT'
+category = 'sqli'
+
+[[as_is]]
+pattern = '''(?i)(?:OR|AND)\s+(?:'[\w\d]*'='[\w\d]*'?|[@:$][A-Za-z_]\w*\s*=\s*[@:$][A-Za-z_]\w*)'''
+category = 'sqli'
+
+[[as_is]]
+pattern = '(?:php|data|zip|rar|file|glob|expect|input|phpinfo|zlib|phar|ssh2|rar|ogg|expect)://[^\s]+'
+category = 'file_inclusion'
+
+[[as_is]]
+pattern = '(?i)\$\{(?:jndi:(?:ldap|rmi|dns)://|\$?\{?(?:lower|upper):j\}ndi|::-j\}ndi)'
+category = 'cmd_injection'
+
+[[as_is]]
+pattern = '\([\s]*[|&][\s]*\([^)(]+=[*]'
+category = 'ldap'
+
+[[as_is]]
+pattern = '\(\s*[&|]\s*'
+category = 'ldap'
+
+[[as_is]]
+pattern = '\)\s*\(\s*(?:[&|!]|(?::)?(?:[a-zA-Z][\w.-]*|\d+(?:\.\d+)*)(?:;[\w.-]+)*(?::[\w.-]+)*\s*:?[=~<>])'
+category = 'ldap'
+
+[[as_is]]
+pattern = '\*\)[|&]?\(+\s*(?::)?(?:[a-zA-Z][\w.-]*|\d+(?:\.\d+)*)(?:;[\w.-]+)*(?::[\w.-]+)*\s*:?='
+category = 'ldap'
+
+[[as_is]]
+pattern = '\*\s*\)+\s*(?:[|&!]\s*)?\(+\s*(?:[&|!]|(?::)?(?:[a-zA-Z][\w.-]*|\d+(?:\.\d+)*)(?:;[\w.-]+)*(?::[\w.-]+)*\s*:?=)'
+category = 'ldap'
+
+[[as_is]]
+pattern = '"\$(?:gt|gte|lt|lte|ne|eq|in|nin|all|mod)"\s*:\s*(?:""|null|\{|\[)'
+category = 'nosql'
+
+[[as_is]]
+pattern = '\[\$(?:where|gt|gte|lt|lte|ne|eq|regex|in|nin|nor|and|or|not|all|size|exists|type|mod|options|expr|function|elemMatch)\]'
+category = 'nosql'
+
+[[as_is]]
+pattern = '"\$(?:where|regex|expr|jsonSchema|function|accumulator|type|exists|size)"\s*:'
+category = 'nosql'
+
+[[as_is]]
+pattern = '(?i)(?:SLEEP\s*\(\s*\d+\s*\))'
+category = 'sqli'
+
+[[as_is]]
+pattern = '(c[A-Za-z_][A-Za-z0-9_]{0,100}(?:\.[A-Za-z_][A-Za-z0-9_]{0,100}){0,20}\n[A-Za-z_][A-Za-z0-9_]{0,100}\n)[^ \t]{0,100}?[Rb]'
+category = 'deserialization'
+
+[[as_is]]
+pattern = 'cos\n'
+category = 'deserialization'
+
+[[as_is]]
+pattern = 'O:\d+:"'
+category = 'deserialization'
+
+[[as_is]]
+pattern = '''(?:__proto__|constructor)\s*(?:\[\s*[\"']prototype[\"']\s*\]|\.\s*prototype)|[\"']__proto__[\"']\s*:'''
+category = 'proto_pollution'
+
+[[as_is]]
+pattern = '''__proto__\s*(?:\[|\.)|\[\s*[\"']?__proto__[\"']?\s*\]|constructor\s*\[\s*[\"']?prototype[\"']?\s*\]|\[\s*[\"']?constructor[\"']?\s*\]\s*\[\s*[\"']?prototype[\"']?\s*\]'''
+category = 'proto_pollution'
+
+[[as_is]]
+pattern = '[\r\n][^\S\r\n]*(?:HTTP\/[0-9.]+|Location:|Set-Cookie:)'
+category = 'http_split'
+
+[[as_is]]
+pattern = '(?:file|dict|gopher|jar|tftp)://[^\s]+'
+category = 'ssrf'
+
+[[as_is]]
+pattern = '<!(?:ENTITY|DOCTYPE)[^>]+SYSTEM[^>]+>'
+category = 'xml'
+
+[[as_is]]
+pattern = '<!DOCTYPE[^>\[]*\[[\s\S]*?<!ENTITY'
+category = 'xml'
+
+[[as_is]]
+pattern = '\$\{[^}]*(?:@[\w.]+@|\b\w+\s*\(|\d+\s*[*/%+\-]\s*\d+)[^}]*\}'
+category = 'template'
+
+[[as_is]]
+pattern = '(?i)<%[=#]?[^%]*(?:system|exec|eval|`|Runtime|IO\.|File\.|Dir\.|\d+\s*[-+*/]\s*\d+)[^%]*%>'
+category = 'template'
+
+[[as_is]]
+pattern = 'System\.Diagnostics\.Process\.Start\s*\(|System\.Reflection\.|Assembly\.Load\s*\('
+category = 'code_injection'
+
+[[as_is]]
+pattern = '''(?:\A|[;,:\n])\s*filename\s*=\s*[\"'][^\"']*\.(?:php\d*|phtml|shtml|asax|ascx|ashx|asmx|aspx|bash|jspx|phar|phps|asa|asp|bat|cer|cfc|cfm|cgi|cmd|com|exe|hta|jsp|msi|pht|vbe|vbs|war|wsf|js|pl|py|rb|sh|ws)[\"']'''
+category = 'file_upload'
+
+[[as_is]]
+pattern = '\.\.[\\/]'
+category = 'path_traversal'
+
+[[as_is]]
+pattern = '(?i)\bWHERE\s+[\w."]+\s*(?:=|<|>|<=|>=|LIKE|IN)\b'
+category = 'sqli'
+
+[[as_is]]
+pattern = '''(?i)('\s*(?:OR|AND)[\s(]*'?(?:[@:$][A-Za-z_]\w*|[\d\w]+)\s*(?:LIKE|[<>]=?|=)[\s(]*'?(?:[@:$][A-Za-z_]\w*|[\d\w]+))'''
+category = 'sqli'
+
+[[as_is]]
+pattern = '(?i)(UNION\s+(?:ALL\s+)?SELECT\s+NULL(?:[,\s]*NULL)*[,\s]*|\(\s*SELECT\s+(?:@@|VERSION))'
+category = 'sqli'
+
+[[as_is]]
+pattern = '(?i);\s*(?:DROP|TRUNCATE|ALTER|CREATE)\s+(?:TABLE|DATABASE|SCHEMA)\b'
+category = 'sqli'
+
+[[as_is]]
+pattern = '(?i)(?:BENCHMARK\s*\(\s*\d+\s*,)'
+category = 'sqli'
+
+[[as_is]]
+pattern = '(?i)(?:LOAD_FILE\s*\([^)]+\))'
+category = 'sqli'
+
+[[as_is]]
+pattern = '''(?i)(?:\A|[;'\"])\s*EXEC(?:UTE)?\s+(?:xp_\w+|sp_\w+)'''
+category = 'sqli'
+
+[[as_is]]
+pattern = '(?i)\bEXEC(?:UTE)?\s+(?:xp_\w+|sp_\w+)'
+category = 'sqli'
+
+[[as_is]]
+pattern = "(?i)\\bWAITFOR\\s+(?:DELAY|TIME)\\s+'\\d{1,2}:\\d{1,2}:\\d{1,2}(?:\\.\\d+)?'"
+category = 'sqli'
+
+[[as_is]]
+pattern = '(?i);\s*(?:INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM|SELECT\b[^;]*?\bFROM\b|REPLACE\s+INTO)\b'
+category = 'sqli'
+
+[[as_is]]
+pattern = 'j[\t\r\n]*a[\t\r\n]*v[\t\r\n]*a[\t\r\n]*s[\t\r\n]*c[\t\r\n]*r[\t\r\n]*i[\t\r\n]*p[\t\r\n]*t[\t\r\n]*:\s*[^\s]+'
+category = 'xss'
+
+[[as_is]]
+pattern = 'javascript:\s*[^\s]+'
+category = 'xss'
+
+[[as_is]]
+pattern = '''(?:<[A-Za-z/](?:[^<>]*[^<>\s])?\s+(?:href|src|data|action)\s*=[\s\"\']*(?:javascript|vbscript|data):)'''
+category = 'xss'
+
+[[as_is]]
+pattern = '''(?:<[A-Za-z/][^<>]*style\s*=\s{0,20}[\"']?[^<>\"']*(?:expression|behavior|url)\s*\([^)]*\))'''
+category = 'xss'
+
+[[translated]]
+pattern = '\A\s*(?:[;&|]\s*)*`\s*(?:[A-Za-z0-9_./~]|\$[({])(?:[^`\\\n]|\\.)*(?:\n\s*)?`(?:\s*[;&|]\s*`\s*(?:[A-Za-z0-9_./~]|\$[({])(?:[^`\\\n]|\\.)*(?:\n\s*)?`)*\s*(?:[;&|]\s*)*\Z'
+category = 'cmd_injection'
+translation = '\A\s*(?:[;&|]\s*)*`\s*(?:[A-Za-z0-9_./~]|\$[({])(?:[^`\\\n]|\\.)*(?:\n\s*)?`(?:\s*[;&|]\s*`\s*(?:[A-Za-z0-9_./~]|\$[({])(?:[^`\\\n]|\\.)*(?:\n\s*)?`)*\s*(?:[;&|]\s*)*\z'
+construct = '\Z (Python absolute end anchor) -> \z'
+verified_on = ['cmd_injection::cmdi_backtick']
+
+[[translated]]
+pattern = '\A[/\\]?(?:[\w.\-~%]+[/\\])*[\w.\-~%]*\.(?:ts|tsx|jsx|py|rb|java|go|rs|php|pl|sh|sql)(?:[/\\][\w.\-~%]*)*(?:\?\S*)?\s*\Z'
+category = 'sensitive_file'
+translation = '\A[/\\]?(?:[\w.\-~%]+[/\\])*[\w.\-~%]*\.(?:ts|tsx|jsx|py|rb|java|go|rs|php|pl|sh|sql)(?:[/\\][\w.\-~%]*)*(?:\?\S*)?\s*\z'
+construct = '\Z (Python absolute end anchor) -> \z'
+verified_on = ['inclusion_sensitive_recon::recon_wp_login', 'inclusion_sensitive_recon::recon_wp_admin', 'inclusion_sensitive_recon::recon_phpmyadmin', 'inclusion_sensitive_recon::recon_joomla_installer']
+
+[[translated]]
+pattern = ''''\s*(?:[\);]+\s*)?--|'[\);]*#(?:\n|\Z)'''
+category = 'sqli'
+translation = ''''\s*(?:[\);]+\s*)?--|'[\);]*#(?:\n|\z)'''
+construct = '\Z (Python absolute end anchor) -> \z'
+verified_on = ['sqli::sqli_comment_bypass', 'sqli::sqli_load_file', 'sqli::sqli_xp_cmdshell', 'sqli::sqli_waitfor_delay']
+
+[[residual]]
+pattern = '''\A(?:(?!\n).)*etc/(?:passwd|shadow|group|hosts|motd|issue|mysql/my\.cnf|ssh/ssh_config)(?:[&#;,\"'<>]|\s*\Z)'''
+category = 'dir_traversal'
+constructs = ['negative lookahead (?!...)']
+affected_suites = ['cmd_injection', 'context_matrix', 'encoding', 'misc_injection', 'path_traversal', 'sqli']
+evidence_cases = ['cmd_injection::cmdi_semicolon_cat', 'cmd_injection::cmdi_ifs_obfuscation', 'context_matrix::ctx_trav_url_path', 'context_matrix::ctx_trav_request_body', 'context_matrix::ctx_trav_header', 'context_matrix::ctx_trav_query_param', 'context_matrix::ctx_trav_unknown', 'encoding::enc_base64_cmd_payload', 'misc_injection::deser_php_object', 'misc_injection::xml_xxe_file', 'path_traversal::trav_double_dot_slash', 'path_traversal::trav_url_encoded', 'path_traversal::trav_double_encoded', 'path_traversal::trav_dots_repetition', 'path_traversal::trav_absolute_etc', 'path_traversal::trav_etc_shadow', 'path_traversal::trav_deep_padding', 'sqli::sqli_load_file']
+
+[[residual]]
+pattern = '(?:^|\s|/)(?:(?<=://)[^\s/@]*@)?(?:localhost\.?|127\.0\.0\.1|0\.0\.0\.0|\[::(?:\d*)\]|\[::ffff:127\.0\.0\.1\]|169\.254(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2}|10(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2[0-9]|3[01])(?:\.\d{1,3}){2}|metadata\.google\.internal|metadata\.goog|100\.100\.100\.200)(?::\d+)?(?:\s|$|/)'
+category = 'ssrf'
+constructs = ['positive lookbehind (?<=...)']
+affected_suites = ['cmd_injection', 'inclusion_sensitive_recon', 'misc_injection']
+evidence_cases = ['cmd_injection::cmdi_pipe_nc', 'cmd_injection::cmdi_curl_sh', 'cmd_injection::cmdi_newline_wget', 'inclusion_sensitive_recon::incl_remote_http', 'misc_injection::log4shell_jndi_ldap', 'misc_injection::log4shell_jndi_obfuscated', 'misc_injection::xml_xxe_remote']
+
+[[residual]]
+pattern = '://(?:[^/@\s]*@)?((?:0[xX][0-9a-fA-F]+|0[0-7]+|[1-9]\d*|0)(?:\.(?:0[xX][0-9a-fA-F]+|0[0-7]+|[1-9]\d*|0)){0,3})(?=[:/\s]|$)'
+category = 'ssrf'
+constructs = ['positive lookahead (?=...)']
+affected_suites = ['cmd_injection', 'inclusion_sensitive_recon', 'misc_injection']
+evidence_cases = ['cmd_injection::cmdi_curl_sh', 'cmd_injection::cmdi_newline_wget', 'inclusion_sensitive_recon::incl_remote_http', 'misc_injection::log4shell_jndi_ldap', 'misc_injection::log4shell_jndi_obfuscated', 'misc_injection::xml_xxe_remote']
+
+[[residual]]
+pattern = '''(?:\A|[;|&])\s*/?(?:[\w.-]+/)*(?:env\s+/?(?:[\w.-]+/)*)?(?:bash|sh|ksh|csh|tsch|zsh|ash)\s+-[a-zA-Z]+(?:\s+(?:'[^']*'|\"[^\"]*\"|[^\s;|&]+))?(?=\s*(?:[;|&]|\Z))'''
+category = 'cmd_injection'
+constructs = ['positive lookahead (?=...)']
+affected_suites = ['cmd_injection']
+evidence_cases = ['cmd_injection::cmdi_bash_dash_c']
+
+[[residual]]
+pattern = '(?i)\bSELECT\b(?:(?!\bSELECT\b)[\w\s,\*().])*?\bFROM\b'
+category = 'sqli'
+constructs = ['negative lookahead (?!...)']
+affected_suites = ['context_matrix', 'semantic', 'sqli']
+evidence_cases = ['context_matrix::ctx_sqli_narrow_header', 'context_matrix::ctx_sqli_narrow_body', 'semantic::sem_structural_dense', 'sqli::sqli_union_password', 'sqli::sqli_information_schema', 'sqli::sqli_double_query']
+
+[[residual]]
+pattern = '\A[/\\]?(?:(?!\.env(?:\.\w+)?(?:[/\\]|\Z))[\w.\-~%]+[/\\])*\.env(?:\.\w+)?(?:[/\\][\w.\-~%]*)*(?:\?\S*)?\s*\Z'
+category = 'sensitive_file'
+constructs = ['negative lookahead (?!...)']
+affected_suites = ['inclusion_sensitive_recon']
+evidence_cases = ['inclusion_sensitive_recon::sensitive_env_file']
+
+[[residual]]
+pattern = '\A[/\\]?(?:(?!\.(?:git|svn|hg|bzr)(?:[/\\]|\Z))[\w.\-~%]+[/\\])*\.(?:git|svn|hg|bzr)(?:[/\\][\w.\-~%]*)*(?:\?\S*)?\s*\Z'
+category = 'sensitive_file'
+constructs = ['negative lookahead (?!...)']
+affected_suites = ['inclusion_sensitive_recon']
+evidence_cases = ['inclusion_sensitive_recon::sensitive_git_config']
+
+[[residual]]
+pattern = '\A[/\\](?:(?!(?:management|config_dump|credentials|system[/\\]version|version[/\\]system)(?:[/\\]|\Z))[\w.\-~%]+[/\\])*(?:management|config_dump|credentials|system[/\\]version|version[/\\]system)(?:[/\\][\w.\-~%]*)*(?:\?\S*)?\s*\Z'
+category = 'recon'
+constructs = ['negative lookahead (?!...)']
+affected_suites = ['inclusion_sensitive_recon']
+evidence_cases = ['inclusion_sensitive_recon::sensitive_aws_credentials']
+
+[[residual]]
+pattern = '\A[/\\]?(?:(?!(?:\.htaccess|\.htpasswd|\.DS_Store|Thumbs\.db|\.npmrc|\.dockerenv|web\.config)(?:[/\\]|\Z))[\w.\-~%]+[/\\])*(?:\.htaccess|\.htpasswd|\.DS_Store|Thumbs\.db|\.npmrc|\.dockerenv|web\.config)(?:[/\\][\w.\-~%]*)*(?:\?\S*)?\s*\Z'
+category = 'cms_probing'
+constructs = ['negative lookahead (?!...)']
+affected_suites = ['inclusion_sensitive_recon']
+evidence_cases = ['inclusion_sensitive_recon::sensitive_htpasswd']
+
+[[residual]]
+pattern = '\A[/\\]?(?:(?![\w.\-~%]*\.(?:bak|backup|old|orig|save|swp|swo|tmp|temp)(?:[/\\]|\Z))[\w.\-~%]+[/\\])*[\w.\-~%]*\.(?:bak|backup|old|orig|save|swp|swo|tmp|temp)(?:[/\\][\w.\-~%]*)*(?:\?\S*)?\s*\Z'
+category = 'cms_probing'
+constructs = ['negative lookahead (?!...)']
+affected_suites = ['inclusion_sensitive_recon']
+evidence_cases = ['inclusion_sensitive_recon::sensitive_config_bak']
+
+[[residual]]
+pattern = '\A[/\\]?(?:(?!(?:wp-(?:admin|login|content|includes|config)|administrator|xmlrpc)\.?(?:php)?(?:[/\\]|\Z))[\w.\-~%]+[/\\])*(?:wp-(?:admin|login|content|includes|config)|administrator|xmlrpc)\.?(?:php)?(?:[/\\][\w.\-~%]*)*(?:\?\S*)?\s*\Z'
+category = 'cms_probing'
+constructs = ['negative lookahead (?!...)']
+affected_suites = ['inclusion_sensitive_recon']
+evidence_cases = ['inclusion_sensitive_recon::recon_wp_login', 'inclusion_sensitive_recon::recon_wp_admin']
+
+[[residual]]
+pattern = '\A[/\\]?(?:(?!(?:actuator|server-status|telescope)(?:[/\\]|\Z))[\w.\-~%]+[/\\])*(?:actuator|server-status|telescope)(?:[/\\][\w.\-~%]*)*(?:\?\S*)?\s*\Z'
+category = 'recon'
+constructs = ['negative lookahead (?!...)']
+affected_suites = ['inclusion_sensitive_recon']
+evidence_cases = ['inclusion_sensitive_recon::recon_server_status', 'inclusion_sensitive_recon::recon_actuator']
+
+[[residual]]
+pattern = '(?<![A-Za-z0-9+/])(?-i:rO0AB)'
+category = 'deserialization'
+constructs = ['negative lookbehind (?<!...)']
+affected_suites = ['misc_injection']
+evidence_cases = ['misc_injection::deser_java_base64']
+
+[[residual]]
+pattern = '''\{\{(?![^\}]*\d{4}-\d{1,2}-\d{1,2}(?!\d))(?=[^\}]*(?:@[\w.]+@|\b\w+\(\s*\)|['\"]?\d+['\"]?\s*[*/%+\-]\s*['\"]?\d+['\"]?))[^\}]*\}\}'''
+category = 'template'
+constructs = ['positive lookahead (?=...)', 'negative lookahead (?!...)']
+affected_suites = ['misc_injection']
+evidence_cases = ['misc_injection::template_jinja_expr']
+
+[[residual]]
+pattern = '''(?:\A|[;,:\n])\s*filename\s*=\s*[\"'][^\"']*\.(?:php\d*|phtml|shtml|asax|ascx|ashx|asmx|aspx|bash|jspx|phar|phps|asa|asp|bat|cer|cfc|cfm|cgi|cmd|exe|hta|jsp|msi|pht|vbe|vbs|war|wsf|js|pl|py|rb|sh|ws)(?![A-Za-z0-9])(?:[^ \"'][^\"']*)?\.(?:docx|jpeg|pptx|tiff|webm|webp|xlsx|avi|bmp|doc|gif|ico|jpg|mkv|mov|mp3|mp4|odt|pdf|png|ppt|svg|tif|wav|xls)[\"']'''
+category = 'file_upload'
+constructs = ['negative lookahead (?!...)']
+affected_suites = ['misc_injection']
+evidence_cases = ['misc_injection::file_upload_double_ext']
+
+[[residual]]
+pattern = '''\A(?:(?!\n).)*(?:boot\.ini|win\.ini|system\.ini|config\.sys)(?:[&#;,\"'<>]|\s*\Z)'''
+category = 'dir_traversal'
+constructs = ['negative lookahead (?!...)']
+affected_suites = ['path_traversal']
+evidence_cases = ['path_traversal::trav_double_backslash', 'path_traversal::trav_windows_ini']
+
+[[residual]]
+pattern = '''\A(?:(?!\n).)*proc/self/environ(?:[&#;,\"'<>]|\s*\Z)'''
+category = 'dir_traversal'
+constructs = ['negative lookahead (?!...)']
+affected_suites = ['path_traversal']
+evidence_cases = ['path_traversal::trav_proc_self_env']
+
+[[residual]]
+pattern = '''(?:<[A-Za-z/](?:[^<>]*[^<>\s/])?(?<!=)(?<!=\")(?<!=')[\s/]+(?:onwebkitplaybacktargetavailabilitychanged|oncontentvisibilityautostatechange|onwebkitpresentationmodechanged|onwebkitmouseforcewillbegin|onwebkitanimationiteration|onsecuritypolicyviolation|onwebkitmouseforcechanged|onvalidationstatuschange|onwebkitfullscreenchange|onwebkitwillrevealbottom|onwebkitanimationstart|onwebkitmouseforcedown|onbeforescriptexecute|onmozfullscreenchange|onwebkittransitionend|onafterscriptexecute|onanimationiteration|onlostpointercapture|onscrollsnapchanging|onunhandledrejection|onwebkitanimationend|onwebkitmouseforceup|ondeviceorientation|ongotpointercapture|onbeforedeactivate|onfullscreenchange|onpointerrawupdate|onreadystatechange|onrejectionhandled|onscrollsnapchange|ontransitioncancel|onanimationcancel|onbeforeeditfocus|oncontextrestored|ondatasetcomplete|onselectionchange|ontransitionstart|onanimationstart|onbeforeactivate|oncanplaythrough|ondatasetchanged|ondurationchange|onlanguagechange|onlayoutcomplete|onloadedmetadata|onpropertychange|oncontrolselect|ondataavailable|ongesturechange|onmediacomplete|onpointercancel|onpromptdismiss|ontransitionend|ontransitionrun|onwebkitneedkey|onanimationend|onbeforetoggle|onbeforeunload|onbeforeupdate|ondevicemotion|onfilterchange|ongesturestart|onmessageerror|onpointerenter|onpointerleave|onpromptaction|onsyncrestored|onvolumechange|onafterupdate|onbeforeinput|onbeforematch|onbeforepaste|onbeforeprint|oncontextlost|oncontextmenu|onerrorupdate|onlosecapture|onpointerdown|onpointermove|onpointerover|onresizestart|onrowinserted|onselectstart|ontouchcancel|ontrackchange|onafterprint|onbeforecopy|oncellchange|ondeactivate|ongestureend|onhashchange|onloadeddata|onmediaerror|onmouseenter|onmouseleave|onmousewheel|onpagereveal|onpointerout|onratechange|onslotchange|ontimeupdate|ontouchstart|onbeforecut|oncuechange|ondragenter|ondragleave|ondragstart|onloadstart|onmousedown|onmousemove|onmouseover|onmovestart|onoutofsync|onpointerup|onresizeend|onrowdelete|onrowsenter|onscrollend|ontimeerror|ontouchmove|onactivate|onauxclick|ondblclick|ondragdrop|ondragexit|ondragover|onfocusout|onformdata|onkeypress|onlocation|onmouseout|onpagehide|onpageshow|onpageswap|onpopstate|onprogress|ontouchend|oncanplay|oncommand|ondragend|onemptied|onfocusin|oninvalid|onkeydown|onmessage|onmouseup|onmoveend|onoffline|onplaying|onreverse|onrowexit|onseeking|onstalled|onstorage|onsuspend|onurlflip|onwaiting|onbounce|oncancel|onchange|onfinish|ononline|onrepeat|onresize|onresume|onscroll|onsearch|onseeked|onselect|onsubmit|ontoggle|onunload|onabort|onbegin|onclick|onclose|onended|onerror|onfocus|oninput|onkeyup|onpaste|onpause|onreset|onstart|onwheel|onblur|oncopy|ondrag|ondrop|onhelp|onload|onmove|onplay|onredo|onseek|onstop|onundo|oncut|onend)\s*=\s{0,20}(?:[\"'][^\"']*[\"']|[^\s>]+))'''
+category = 'xss'
+constructs = ['negative lookbehind (?<!...)']
+affected_suites = ['semantic', 'xss']
+evidence_cases = ['semantic::sem_regex_plus_semantic_below_threshold', 'xss::xss_img_onerror', 'xss::xss_svg_onload', 'xss::xss_body_onload', 'xss::xss_details_ontoggle', 'xss::xss_event_handler_nested_quote', 'xss::xss_video_source', 'xss::xss_marquee_onstart', 'xss::xss_input_autofocus', 'xss::xss_select_onchange']
+
+[[residual]]
+pattern = '''(?i)\b(?:OR|AND)\s*(\d+|'[^']*'|\"[^\"]*\"|[@:$][A-Za-z_]\w*)\s*=\s*\1\b'''
+category = 'sqli'
+constructs = ['backreference (\1)']
+affected_suites = ['sqli']
+evidence_cases = ['sqli::sqli_or_tautology', 'sqli::sqli_sqlite_version']
+
+[[residual]]
+pattern = '\w/\*(?!!)[^*]*\*/\w'
+category = 'sqli'
+constructs = ['negative lookahead (?!...)']
+affected_suites = ['sqli']
+evidence_cases = ['sqli::sqli_inline_comment_obfuscation']
+
