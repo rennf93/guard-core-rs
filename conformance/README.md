@@ -43,6 +43,14 @@ cargo test -p guard-core-conformance --test ledger_integrity -- --nocapture  # l
    `threats` as an order-insensitive multiset keyed on the canonical entry
    content. `execution_time` is dropped recursively before comparing.
 
+Threat `position` fields (`suspicious_patterns` entries) are compared natively
+against corpus expectations: they are Unicode code-point indices into the
+analyzed content, matching the Python reference (`semantic.py` emits
+`match.start()` on the processed `str`). The engine finds matches on bytes
+internally and converts byte offsets to code-point indices at its result
+boundary (`SuspiciousPattern.position`), so the runner performs no conversion
+of its own.
+
 ### Detect equivalent (current engine state)
 
 The Rust engine currently ports preprocessing (`preprocessor`), regex
@@ -106,7 +114,10 @@ the vendored corpus, exactly once, in one of:
 - `as_is`: compiles unchanged with the `regex` crate (47 patterns)
 - `translated`: recorded, corpus-verified translation (3 patterns, all
   `\Z` -> `\z`, Python's absolute-end anchor); the integrity test reproduces
-  the recorded `(match, position)` evidence from the corpus cases
+  the recorded `(match, position)` evidence from the corpus cases. The test
+  runs the translated regex directly, so it converts the `regex` crate's byte
+  spans to code-point indices when checking recorded positions (the same
+  boundary conversion the engine performs)
 - `residual`: uses constructs the RE2-family `regex` crate rejects (20
   patterns: lookbehind/lookahead, one backreference). No translation is
   attempted.

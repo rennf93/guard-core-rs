@@ -141,6 +141,9 @@ fn translated_patterns_compile_and_reproduce_corpus_evidence() {
             let mut attempts = Vec::new();
             for (name, haystack) in &haystacks {
                 for m in translated.find_iter(haystack) {
+                    // this test runs the translated regex directly (not the
+                    // engine), so the corpus's code-point positions must be
+                    // derived from the regex crate's byte spans here
                     let char_index = haystack[..m.start()].chars().count();
                     attempts.push(format!("{name}: '{}'@{char_index}", m.as_str()));
                     if m.as_str() == case_ev.matched && char_index as u64 == case_ev.position {

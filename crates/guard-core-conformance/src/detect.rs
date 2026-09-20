@@ -144,3 +144,47 @@ impl Verdict {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::knobs::map_knobs;
+
+    fn corpus_knobs() -> Knobs {
+        map_knobs(&json!({
+            "detection_max_content_length": 10000,
+            "detection_max_body_inspect_bytes": 262_144,
+            "detection_preserve_attack_patterns": true,
+            "detection_semantic_threshold": 0.7,
+            "detection_threat_score_threshold": 1.0
+        }))
+        .expect("corpus knobs must map")
+    }
+
+    // the runner compares positions natively against corpus expectations, so
+    // verdicts must carry code-point indices (Python str index space), not
+    // byte offsets. Payload is sem_structural_dense with a 10-code-point CJK
+    // prefix (30 bytes) so a byte offset would read 45/73/86.
+    #[test]
+    fn suspicious_pattern_positions_are_codepoint_indices() {
+        let knobs = corpus_knobs();
+
+        let content = "测试测试测试测试测试${x} <t> (y) [z] {w} a://b c://d \
+                       <b>call(f(x))</b> union select concat(database(),table_name) \
+                       from information_schema.tables where 1=1 \
+                       {{render(jinja(template(mustache(handlebars(ejs(pug(twig)))))))}}";
+        let verdict = detect(content, &knobs);
+        assert!(
+            !verdict.threats.is_empty(),
+            "payload must emit semantic threats for the position check"
+        );
+        let positions: Vec<u64> = verdict
+            .threats
+            .iter()
+            .flat_map(|t| t["analysis"]["suspicious_patterns"].as_array().unwrap())
+            .filter(|p| p["type"] == "tag_like")
+            .map(|p| p["position"].as_u64().unwrap())
+            .collect();
+        assert_eq!(positions, [15, 43, 56]);
+    }
+}
