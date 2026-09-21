@@ -12,11 +12,6 @@
 #   - failing case listed here     -> xfail (tolerated, reported four-way)
 spec_version = '4.0.2'
 cases = [
-    { case = 'encoding::enc_base64_cmd_payload', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'encoding::enc_base64_xss_payload', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'encoding::enc_double_url_sqli', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'encoding::enc_mixed_encoding', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'encoding::enc_unicode_escape', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'inclusion_sensitive_recon::incl_data_uri', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'inclusion_sensitive_recon::incl_expect_scheme', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'inclusion_sensitive_recon::incl_phar_stream', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
