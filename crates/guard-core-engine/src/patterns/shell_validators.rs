@@ -29,6 +29,7 @@ fn shell_text_is_printable_ascii(token: &str) -> bool {
         .all(|c| c == '\t' || ('\u{20}'..='\u{7e}').contains(&c))
 }
 
+#[allow(clippy::missing_const_for_fn)] // clippy version drift: newer lints flag these
 fn backtick_token_has_chained_shell_operators(token: &str) -> bool {
     let mut count = 0usize;
     let bytes = token.as_bytes();
@@ -185,6 +186,7 @@ pub fn glued_backtick_pair_is_injection(
 }
 
 /// `(?:;|\|\||\||&&)\s*(?:\x60|[A-Za-z_][\w-]*|[~./][\w./-]*|-[\w-]*)|\$\(|\$\{`
+#[allow(clippy::missing_const_for_fn)] // clippy version drift: newer lints flag these
 fn shell_metacharacter_window(window: &str) -> bool {
     let bytes = window.as_bytes();
     let mut i = 0usize;
