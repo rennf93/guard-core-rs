@@ -1,5 +1,4 @@
-use guard_core_engine::preprocessor;
-use guard_core_engine::semantic::{self, AnalysisResult, AttackKeywords, AttackStructures};
+use guard_core_engine::detect::{self, DetectConfig, Threat};
 use serde_json::{Map, Value, json};
 
 use crate::knobs::Knobs;
@@ -15,88 +14,59 @@ pub struct Verdict {
     pub processed_length: usize,
 }
 
+/// The ENGINE's detect (spec 4.0.2 `SusPatternsManager.detect` pipeline);
+/// this adapter only maps the typed verdict to the corpus JSON shape.
 #[must_use]
-pub fn detect(content: &str, knobs: &Knobs) -> Verdict {
-    let processed = preprocessor::preprocess(
-        content,
-        knobs.max_truncate_bytes,
-        knobs.preserve_attack_patterns,
-    );
-
-    let semantic_input: String = processed.chars().take(knobs.max_content_length).collect();
-    let analysis = semantic::analyze(
-        &semantic_input,
-        &AttackKeywords::default(),
-        &AttackStructures::default(),
-    );
-    let score = semantic::get_threat_score(&analysis);
-    let threats = semantic_threats(&analysis, score, knobs.semantic_threshold);
-
-    let regex_anomaly = 0.0;
-    let is_threat = regex_anomaly >= knobs.threat_score_threshold || !threats.is_empty();
-
-    let threat_score = if threats.is_empty() {
-        0.0
-    } else {
-        semantic_max(&threats).min(1.0)
+pub fn detect(content: &str, request_context: &str, knobs: &Knobs) -> Verdict {
+    let config = DetectConfig {
+        max_content_length: knobs.max_content_length,
+        max_full_scan_bytes: knobs.max_truncate_bytes,
+        preserve_attack_patterns: knobs.preserve_attack_patterns,
+        semantic_threshold: knobs.semantic_threshold,
+        threat_score_threshold: knobs.threat_score_threshold,
     };
+    let verdict = detect::detect(content, request_context, &config);
 
     Verdict {
-        is_threat,
-        threat_score,
-        threats,
-        original_length: content.chars().count(),
-        processed_length: processed.chars().count(),
+        is_threat: verdict.is_threat,
+        threat_score: verdict.threat_score,
+        threats: verdict.threats.iter().map(threat_json).collect(),
+        original_length: verdict.original_length,
+        processed_length: verdict.processed_length,
     }
 }
 
-fn semantic_max(threats: &[Value]) -> f64 {
-    threats
-        .iter()
-        .filter_map(|t| {
-            t.get("probability")
-                .or_else(|| t.get("threat_score"))
-                .and_then(Value::as_f64)
-        })
-        .fold(0.0_f64, f64::max)
-}
-
-fn semantic_threats(analysis: &AnalysisResult, score: f64, threshold: f64) -> Vec<Value> {
-    let mut threats = Vec::new();
-
-    if score > threshold {
-        let mut probs: Vec<(&str, f64)> = analysis
-            .attack_probabilities
-            .iter()
-            .map(|(k, v)| (*k, *v))
-            .collect();
-        probs.sort_unstable_by(|a, b| a.0.cmp(b.0));
-
-        for (attack_type, probability) in probs {
-            if probability >= threshold {
-                threats.push(json!({
+fn threat_json(threat: &Threat) -> Value {
+    match threat {
+        Threat::Regex(r) => json!({
+            "type": "regex",
+            "pattern": r.pattern,
+            "match": r.match_text,
+            "position": r.position,
+            "category": r.category,
+            "weight": r.weight,
+        }),
+        Threat::Semantic(s) => {
+            if s.fallback {
+                json!({
                     "type": "semantic",
-                    "attack_type": attack_type,
-                    "probability": probability,
-                    "analysis": analysis_json(analysis),
-                }));
+                    "attack_type": s.attack_type,
+                    "threat_score": s.score,
+                    "analysis": analysis_json(&s.analysis),
+                })
+            } else {
+                json!({
+                    "type": "semantic",
+                    "attack_type": s.attack_type,
+                    "probability": s.score,
+                    "analysis": analysis_json(&s.analysis),
+                })
             }
         }
-
-        if threats.is_empty() && score >= threshold {
-            threats.push(json!({
-                "type": "semantic",
-                "attack_type": "suspicious",
-                "threat_score": score,
-                "analysis": analysis_json(analysis),
-            }));
-        }
     }
-
-    threats
 }
 
-fn analysis_json(analysis: &AnalysisResult) -> Value {
+fn analysis_json(analysis: &guard_core_engine::semantic::AnalysisResult) -> Value {
     let mut probabilities = Map::new();
     let mut keys: Vec<&&str> = analysis.attack_probabilities.keys().collect();
     keys.sort();
@@ -173,7 +143,7 @@ mod tests {
                        <b>call(f(x))</b> union select concat(database(),table_name) \
                        from information_schema.tables where 1=1 \
                        {{render(jinja(template(mustache(handlebars(ejs(pug(twig)))))))}}";
-        let verdict = detect(content, &knobs);
+        let verdict = detect(content, "request_body", &knobs);
         assert!(
             !verdict.threats.is_empty(),
             "payload must emit semantic threats for the position check"
@@ -181,10 +151,25 @@ mod tests {
         let positions: Vec<u64> = verdict
             .threats
             .iter()
+            .filter(|t| t["type"] == "semantic")
             .flat_map(|t| t["analysis"]["suspicious_patterns"].as_array().unwrap())
             .filter(|p| p["type"] == "tag_like")
             .map(|p| p["position"].as_u64().unwrap())
             .collect();
         assert_eq!(positions, [15, 43, 56]);
+    }
+
+    #[test]
+    fn regex_threat_positions_are_codepoint_indices() {
+        let knobs = corpus_knobs();
+        // pattern id 1 fires at code-point 6 (byte offset 18 with the CJK prefix)
+        let content = "测试测试测试javascript:alert(1)";
+        let verdict = detect(content, "request_body", &knobs);
+        let script_threat = verdict
+            .threats
+            .iter()
+            .find(|t| t["pattern"] == json!("javascript:\\s*[^\\s]+"))
+            .expect("javascript: threat");
+        assert_eq!(script_threat["position"].as_u64(), Some(6));
     }
 }

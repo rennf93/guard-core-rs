@@ -1,7 +1,8 @@
-//! Structural matchers for the pattern-table entries the `regex` crate
-//! cannot compile (lookarounds, backreferences) plus the reference's bespoke
-//! candidate locators (ported from `guard_core/handlers/_suspatterns_matchers.py`,
-//! spec 4.0.2).
+//! Structural matchers for pattern-table entries the `regex` crate rejects.
+//!
+//! The table entries handled here use lookarounds or backreferences plus the
+//! reference's bespoke candidate locators (ported from
+//! `guard_core/handlers/_suspatterns_matchers.py`, spec 4.0.2).
 //!
 //! Guarded matchers compile the reference pattern without the zero-width
 //! construct and enforce it as a suffix/prefix check per candidate. When a
@@ -88,10 +89,7 @@ pub fn shell_dash_c_finditer(haystack: &str, compiled: &PyRegex) -> Vec<Candidat
             continue;
         }
         let mut pos = prefix_match.end();
-        loop {
-            let Some(tm) = token.re().find_at(haystack, pos) else {
-                break;
-            };
+        while let Some(tm) = token.re().find_at(haystack, pos) {
             if tm.start() != pos {
                 break;
             }
@@ -116,7 +114,11 @@ pub fn shell_dash_c_finditer(haystack: &str, compiled: &PyRegex) -> Vec<Candidat
 const LDAP_NULL_BYTE_TAIL_RAW: &str = r"\*\)+(?:%00|\\u0000|\\x00|\\0|\x00)";
 const LDAP_NULL_BYTE_TAIL_DECODED: &str = r"\*\)+\x00";
 
-fn ldap_null_byte_attr_finditer(haystack: &str, compiled: &PyRegex, tail_source: &str) -> Vec<Candidate> {
+fn ldap_null_byte_attr_finditer(
+    haystack: &str,
+    compiled: &PyRegex,
+    tail_source: &str,
+) -> Vec<Candidate> {
     if !haystack.contains('*') || !haystack.contains(')') {
         return Vec::new();
     }
@@ -144,11 +146,9 @@ fn ldap_null_byte_attr_finditer(haystack: &str, compiled: &PyRegex, tail_source:
         let equals_pos = value_start - 1;
         let mut name_start = equals_pos;
         while name_start > 0
-            && char_before(haystack, name_start).is_some_and(|(_, c)| {
-                py_is_word(c) || c == '-'
-            })
+            && char_before(haystack, name_start).is_some_and(|(_, c)| py_is_word(c) || c == '-')
         {
-            name_start = char_before(haystack, name_start).map(|(i, _)| i).unwrap_or(0);
+            name_start = char_before(haystack, name_start).map_or(0, |(i, _)| i);
         }
         if name_start == equals_pos {
             continue;
@@ -168,10 +168,8 @@ fn ldap_null_byte_attr_finditer(haystack: &str, compiled: &PyRegex, tail_source:
 }
 
 fn walk_back(haystack: &str, mut pos: usize, pred: impl Fn(char) -> bool) -> usize {
-    while pos > 0
-        && char_before(haystack, pos).is_some_and(|(_, c)| pred(c))
-    {
-        pos = char_before(haystack, pos).map(|(i, _)| i).unwrap_or(0);
+    while pos > 0 && char_before(haystack, pos).is_some_and(|(_, c)| pred(c)) {
+        pos = char_before(haystack, pos).map_or(0, |(i, _)| i);
     }
     pos
 }
@@ -326,18 +324,17 @@ fn word_starts_at(haystack: &str, pos: usize, literal: &[u8]) -> bool {
     if !eq_ignore_ascii_at(haystack, pos, literal) {
         return false;
     }
-    if pos > 0
-        && char_before(haystack, pos).is_some_and(|(_, c)| py_is_word(c))
-    {
+    if pos > 0 && char_before(haystack, pos).is_some_and(|(_, c)| py_is_word(c)) {
         return false;
     }
     let after = pos + literal.len();
     char_at(haystack, after).is_none_or(|(_, c)| !py_is_word(c))
 }
 
-/// `(?i)\bSELECT\b(?:(?!\bSELECT\b)[\w\s,\*().])*?\bFROM\b`: the lazy loop
-/// consumes class characters but must not step over a new `\bSELECT\b`; the
-/// first `\bFROM\b` reachable under that rule ends the match.
+/// Lazy-loop matcher for `(?i)\bSELECT\b(?:(?!\bSELECT\b)[\w\s,\*().])*?\bFROM\b`.
+///
+/// The lazy loop consumes class characters but must not step over a new
+/// `\bSELECT\b`; the first `\bFROM\b` reachable under that rule ends the match.
 #[must_use]
 pub fn sqli_select_from_finditer(haystack: &str) -> Vec<Candidate> {
     let mut matches = Vec::new();
@@ -353,9 +350,8 @@ pub fn sqli_select_from_finditer(haystack: &str) -> Vec<Candidate> {
             let Some((offset, c)) = char_at(haystack, pos) else {
                 break;
             };
-            let in_class = py_is_word(c)
-                || c.is_whitespace()
-                || matches!(c, ',' | '*' | '(' | ')' | '.');
+            let in_class =
+                py_is_word(c) || c.is_whitespace() || matches!(c, ',' | '*' | '(' | ')' | '.');
             if !in_class || word_starts_at(haystack, pos, SELECT_LITERAL) {
                 break;
             }
@@ -391,17 +387,15 @@ fn find_word_at(haystack: &str, from: usize, literal: &[u8]) -> Option<usize> {
 
 const TAUTOLOGY_ATOM: &str = r#"(?:\d+|'[^']*'|"[^"]*"|[@:$][A-Za-z_]\w*)"#;
 
-/// `(?i)\b(?:OR|AND)\s*(ATOM)\s*=\s*\1\b` with the backreference evaluated
-/// explicitly: atom variants are tried in regex backtracking order (greedy
-/// digit runs first, longest prefix first) and the second occurrence must
-/// equal the first case-insensitively (the reference backref inherits the
-/// pattern's `(?i)`).
+/// Explicit backreference evaluation for `(?i)\b(?:OR|AND)\s*(ATOM)\s*=\s*\1\b`.
+///
+/// Atom variants are tried in regex backtracking order (greedy digit runs
+/// first, longest prefix first) and the second occurrence must equal the
+/// first case-insensitively (the reference backref inherits the pattern's
+/// `(?i)`).
 #[must_use]
 pub fn sqli_tautology_finditer(haystack: &str) -> Vec<Candidate> {
-    let Ok(re) = PyRegex::compile(
-        &format!(r"(?i)\b(?:OR|AND)\s*({ATOM})", ATOM = TAUTOLOGY_ATOM),
-        false,
-    ) else {
+    let Ok(re) = PyRegex::compile(&format!(r"(?i)\b(?:OR|AND)\s*({TAUTOLOGY_ATOM})"), false) else {
         return Vec::new();
     };
     let mut matches = Vec::new();
@@ -447,18 +441,14 @@ fn tautology_atom_variants(haystack: &str, pos: usize, greedy_end: usize) -> Vec
 
 /// Complete the tautology match from a fixed atom: `\s*=\s*` then the same
 /// atom text case-insensitively, then `\b`.
-fn tautology_complete(
-    haystack: &str,
-    match_start: usize,
-    atom: regex::Match<'_>,
-) -> Option<usize> {
+fn tautology_complete(haystack: &str, match_start: usize, atom: regex::Match<'_>) -> Option<usize> {
     for (atom_end, atom_text) in tautology_atom_variants(haystack, atom.start(), atom.end()) {
         let mut cursor = atom_end;
-        cursor = walk_forward_while(haystack, cursor, |c| c.is_whitespace());
+        cursor = walk_forward_while(haystack, cursor, char::is_whitespace);
         if char_at(haystack, cursor).map(|(_, c)| c) != Some('=') {
             continue;
         }
-        cursor = walk_forward_while(haystack, cursor + 1, |c| c.is_whitespace());
+        cursor = walk_forward_while(haystack, cursor + 1, char::is_whitespace);
         if haystack[cursor..].len() < atom_text.len() {
             continue;
         }
@@ -494,9 +484,7 @@ pub fn sqli_inline_comment_finditer(haystack: &str) -> Vec<Candidate> {
             return false;
         };
         let guard_pos = i + c.len_utf8() + 2;
-        text.as_bytes()
-            .get(guard_pos)
-            .is_some_and(|b| *b != b'!')
+        text.as_bytes().get(guard_pos).is_some_and(|b| *b != b'!')
     })
 }
 
@@ -510,9 +498,8 @@ const SSRF_HOST_ALT: &str = r"(?:localhost\.?|127\.0\.0\.1|0\.0\.0\.0|\[::(?:\d*
 /// alternative requires `://` immediately before it (lookbehind guard).
 #[must_use]
 pub fn ssrf_private_host_finditer(haystack: &str) -> Vec<Candidate> {
-    let source = format!(
-        r"(?:\A|\s|/)((?:[^\s/@]*@)?)(?:{SSRF_HOST_ALT})(?::\d+)?(?:\s|(?:\n?\z)|/)"
-    );
+    let source =
+        format!(r"(?:\A|\s|/)((?:[^\s/@]*@)?)(?:{SSRF_HOST_ALT})(?::\d+)?(?:\s|(?:\n?\z)|/)");
     let Ok(compiled) = PyRegex::compile(&source, true) else {
         return Vec::new();
     };
@@ -523,8 +510,7 @@ pub fn ssrf_private_host_finditer(haystack: &str) -> Vec<Candidate> {
         let candidate = Candidate::new(m.start(), m.end());
         let userinfo = caps.get(1).expect("userinfo group");
         let guard_ok = userinfo.is_empty() || {
-            userinfo.start() >= 3
-                && &haystack[userinfo.start() - 3..userinfo.start()] == "://"
+            userinfo.start() >= 3 && &haystack[userinfo.start() - 3..userinfo.start()] == "://"
         };
         if guard_ok {
             out.push(candidate);
@@ -564,11 +550,7 @@ pub fn ssrf_numeric_host_finditer(haystack: &str) -> Vec<Candidate> {
 
 /// Python terminator guard `(?=T|$)`: `T` at `pos`, or end of text, or a
 /// single trailing newline before the end.
-fn terminator_guard(
-    haystack: &str,
-    pos: usize,
-    terminator: impl Fn(char) -> bool,
-) -> bool {
+fn terminator_guard(haystack: &str, pos: usize, terminator: impl Fn(char) -> bool) -> bool {
     let Some(c) = char_at(haystack, pos).map(|(_, c)| c) else {
         return true; // end of text
     };
@@ -585,9 +567,10 @@ fn terminator_guard(
 
 const SHELL_DASH_FLAG_BODY: &str = r#"(?:\A|[;|&])\s*/?(?:[\w.-]+/)*(?:env\s+/?(?:[\w.-]+/)*)?(?:bash|sh|ksh|csh|tsch|zsh|ash)\s+-[a-zA-Z]+(?:\s+(?:'[^']*'|"[^"]*"|[^\s;|&]+))?"#;
 
-/// `(?:\A|[;|&])\s*...(?=\s*(?:[;|&]|\Z))`: the trailing lookahead is a
-/// suffix check. Every backtracked variant of the optional tail ends in a
-/// word character, which the guard also rejects, so the check is exact.
+/// Trailing-lookahead suffix check for `(?:\A|[;|&])\s*...(?=\s*(?:[;|&]|\Z))`.
+///
+/// Every backtracked variant of the optional tail ends in a word character,
+/// which the guard also rejects, so the check is exact.
 #[must_use]
 pub fn shell_dash_flag_finditer(haystack: &str) -> Vec<Candidate> {
     let Ok(re) = PyRegex::compile(SHELL_DASH_FLAG_BODY, true) else {
@@ -650,8 +633,7 @@ fn sensitive_path_finditer(
 ) -> Vec<Candidate> {
     let mut pos = 0usize;
     match (leading_sep, char_at(haystack, 0)) {
-        (LeadingSep::Optional, Some((_, c))) if matches!(c, '/' | '\\') => pos = 1,
-        (LeadingSep::Required, Some((_, c))) if matches!(c, '/' | '\\') => pos = 1,
+        (LeadingSep::Optional | LeadingSep::Required, Some((_, '/' | '\\'))) => pos = 1,
         (LeadingSep::Required, _) => return Vec::new(),
         (LeadingSep::Optional, _) => {}
     }
@@ -661,8 +643,7 @@ fn sensitive_path_finditer(
             break;
         }
         let seg_end = walk_forward_while(haystack, pos, is_path_class);
-        if seg_end > pos
-            && char_at(haystack, seg_end).is_some_and(|(_, c)| matches!(c, '/' | '\\'))
+        if seg_end > pos && char_at(haystack, seg_end).is_some_and(|(_, c)| matches!(c, '/' | '\\'))
         {
             pos = seg_end + 1;
             continue;
@@ -672,20 +653,15 @@ fn sensitive_path_finditer(
     // tail: BAD + (?:[/\\][\w.\-~%]*)* + (?:\?\S*)? + \s*\z
     for bad_end in bad(haystack, pos) {
         let mut cursor = bad_end;
-        loop {
-            match char_at(haystack, cursor).map(|(_, c)| c) {
-                Some('/' | '\\') => {
-                    cursor += 1;
-                    cursor = walk_forward_while(haystack, cursor, is_path_class);
-                }
-                _ => break,
-            }
+        while let Some('/' | '\\') = char_at(haystack, cursor).map(|(_, c)| c) {
+            cursor += 1;
+            cursor = walk_forward_while(haystack, cursor, is_path_class);
         }
         if char_at(haystack, cursor).map(|(_, c)| c) == Some('?') {
             cursor += 1;
             cursor = walk_forward_while(haystack, cursor, |c| !c.is_whitespace());
         }
-        let tail_end = walk_forward_while(haystack, cursor, |c| c.is_whitespace());
+        let tail_end = walk_forward_while(haystack, cursor, char::is_whitespace);
         if tail_end == haystack.len() {
             return vec![Candidate::new(0, haystack.len())];
         }
@@ -711,17 +687,14 @@ fn literal_bad<'a>(alternatives: &'a [&'a str]) -> BadMatcher<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BadSuffix {
     /// `(?:[.\-][\w.\-~%]*)?` (id 121)
-    DotDashRun,
+    DashRun,
     /// `(?:\.ya?ml)?` (id 132)
-    DotYaml,
+    YamlSuffix,
     /// `(?:\.[\w.\-~%]*)?` (id 125)
     DotRun,
 }
 
-fn literal_suffix_bad<'a>(
-    alternatives: &'a [&'a str],
-    suffix: BadSuffix,
-) -> BadMatcher<'a> {
+fn literal_suffix_bad<'a>(alternatives: &'a [&'a str], suffix: BadSuffix) -> BadMatcher<'a> {
     Box::new(move |haystack: &str, pos: usize| -> Vec<usize> {
         let mut ends = Vec::new();
         for alt in alternatives {
@@ -733,7 +706,7 @@ fn literal_suffix_bad<'a>(
             ends.push(head);
             let rest = &haystack[head..];
             match suffix {
-                BadSuffix::DotYaml => {
+                BadSuffix::YamlSuffix => {
                     if let Some(after_dot) = rest.strip_prefix('.') {
                         if after_dot.starts_with("yaml") {
                             ends.push(head + 5);
@@ -749,7 +722,7 @@ fn literal_suffix_bad<'a>(
                         ends.push(head + 1);
                     }
                 }
-                BadSuffix::DotDashRun => {
+                BadSuffix::DashRun => {
                     if let Some((i, c)) = char_at(haystack, head)
                         && matches!(c, '.' | '-')
                     {
@@ -965,7 +938,15 @@ pub const DOCKERFILE_BAD: &[&str] = &[
     "Procfile",
 ];
 
-pub const DOUBLE_DOT_BAD: &[&str] = &[".htaccess", ".htpasswd", ".DS_Store", "Thumbs.db", ".npmrc", ".dockerenv", "web.config"];
+pub const DOUBLE_DOT_BAD: &[&str] = &[
+    ".htaccess",
+    ".htpasswd",
+    ".DS_Store",
+    "Thumbs.db",
+    ".npmrc",
+    ".dockerenv",
+    "web.config",
+];
 
 /// `\A[/\\]?...\.env...` (id 101).
 #[must_use]
@@ -989,7 +970,11 @@ pub fn sensitive_path_management(haystack: &str) -> Vec<Candidate> {
 /// `\A[/\\]?...[^\w.\-~%]*\.(?:ext|...)` (ids 104 `.map`, 113 backup files).
 #[must_use]
 pub fn sensitive_path_scan_ext(haystack: &str, extensions: &[&str]) -> Vec<Candidate> {
-    sensitive_path_finditer(haystack, LeadingSep::Optional, extension_run_bad(extensions))
+    sensitive_path_finditer(
+        haystack,
+        LeadingSep::Optional,
+        extension_run_bad(extensions),
+    )
 }
 
 /// `\A[/\\]?...\.(?:git|svn|hg|bzr)...` (id 106).
@@ -1021,7 +1006,11 @@ pub fn sensitive_path_literal_suffix(
     literals: &[&str],
     suffix: BadSuffix,
 ) -> Vec<Candidate> {
-    sensitive_path_finditer(haystack, LeadingSep::Optional, literal_suffix_bad(literals, suffix))
+    sensitive_path_finditer(
+        haystack,
+        LeadingSep::Optional,
+        literal_suffix_bad(literals, suffix),
+    )
 }
 
 /// Anchored literal shapes with `(?:\.[\w.\-~%]*)?` (id 125).
@@ -1050,8 +1039,9 @@ pub fn sensitive_path_config(haystack: &str) -> Vec<Candidate> {
 /// 110, 112, 115`), verbatim from the canonical sources.
 const ATTACK_REPORT_LEXICON: &str = r"\b(?:scan(?:ner|ning|ned|s)?|attack(?:er|ers|ed|s)?|attempt(?:ed|s)?|exploit(?:ation|ed|s|ing|kit)?|prob(?:e|ed|es|ing)|malicious|intrusion(?:s)?|botnet(?:s)?|honeypot(?:s)?|brute[- ]force|credential[- ]stuffing|threat feed|vulnerabilit(?:y|ies)|hostile|recon(?:naissance)?|spoofed referer|bad actor(?:s)?|WAF|IDS|SOC|pentest(?:ing)?|blocked|flagged|triggered|denied|enumerat(?:e|ed|ing)|suspicious)\b";
 
-/// The lexicon-lookahead path shapes (ids 33/102/107/110/112/115): the
-/// reference pattern is `\A(?=(?:(?!\n).)*LEXICON)\A(?:(?!\n).)*<path-shape>`,
+/// Lexicon-lookahead path shapes (ids 33/102/107/110/112/115).
+///
+/// The reference pattern is `\A(?=(?:(?!\n).)*LEXICON)\A(?:(?!\n).)*<path-shape>`,
 /// so the shape must sit in the first line and the first line must carry a
 /// lexicon word.
 #[must_use]
@@ -1122,10 +1112,7 @@ pub fn deserialization_b64_finditer(haystack: &str, magic: &str) -> Vec<Candidat
 /// `(?i)\bORDER\s+BY\s+\d+\s*(?:--|#|;|\)|,|/\*|\Z)|(?<=[=?&])ORDER\s+BY\s+\d+\s*\n`
 #[must_use]
 pub fn sqli_order_by_terminator_finditer(haystack: &str) -> Vec<Candidate> {
-    let Ok(alt1) = PyRegex::compile(
-        r"\bORDER\s+BY\s+\d+\s*(?:--|#|;|\)|,|/\*|\z)",
-        true,
-    ) else {
+    let Ok(alt1) = PyRegex::compile(r"\bORDER\s+BY\s+\d+\s*(?:--|#|;|\)|,|/\*|\z)", true) else {
         return Vec::new();
     };
     let Ok(alt2) = PyRegex::compile(r"ORDER\s+BY\s+\d+\s*\n", true) else {
@@ -1138,8 +1125,7 @@ pub fn sqli_order_by_terminator_finditer(haystack: &str) -> Vec<Candidate> {
         .collect();
     let guarded = guarded_finditer(haystack, alt2.re(), |text, candidate| {
         candidate.start > 0
-            && char_before(text, candidate.start)
-                .is_some_and(|(_, c)| matches!(c, '=' | '?' | '&'))
+            && char_before(text, candidate.start).is_some_and(|(_, c)| matches!(c, '=' | '?' | '&'))
     });
     out.extend(guarded);
     out.sort_by_key(|c| (c.start, std::cmp::Reverse(c.end)));
@@ -1160,8 +1146,7 @@ pub fn file_inclusion_bare_host_finditer(haystack: &str) -> Vec<Candidate> {
         return Vec::new();
     };
     guarded_finditer(haystack, re.re(), |text, candidate| {
-        candidate.start == 0
-            || char_before(text, candidate.start).is_none_or(|(_, c)| c != ':')
+        candidate.start == 0 || char_before(text, candidate.start).is_none_or(|(_, c)| c != ':')
     })
 }
 
@@ -1172,10 +1157,11 @@ pub fn file_inclusion_bare_host_finditer(haystack: &str) -> Vec<Candidate> {
 const SCHEME_PATH_TRIMMED: &str =
     r#"=(?:https?|ftp)://[^\s'"<>]+/[^\s'"<>/]*\.(?:phtml|php[3-5]?|phar|jsp|aspx?|pl|py|txt|inc)"#;
 
-/// id 63: the reference runs the UNMODIFIED pattern (trailing
-/// `(?![a-zA-Z0-9])`) inside the bounded scan window. The lookahead is
-/// enforced as a suffix guard; on rejection the scan abandons the prefix
-/// candidate and moves to the next one, exactly like a failed window match.
+/// id 63: the reference runs the UNMODIFIED pattern inside the bounded window.
+///
+/// The trailing `(?![a-zA-Z0-9])` is enforced as a suffix guard; on rejection
+/// the scan abandons the prefix candidate and moves to the next one, exactly
+/// like a failed window match.
 #[must_use]
 pub fn file_inclusion_scheme_path_finditer(haystack: &str) -> Vec<Candidate> {
     let (Some(compiled), Some(prefix), Some(terminator)) = (
@@ -1228,15 +1214,11 @@ pub fn file_inclusion_template_url_finditer(haystack: &str) -> Vec<Candidate> {
 /// `(?<!\x60)\x60(?:[A-Za-z0-9_./~]|\$[({])(?:[^\x60\\\n]|\\.)*\x60`
 #[must_use]
 pub fn glued_backtick_candidate_finditer(haystack: &str) -> Vec<Candidate> {
-    let Ok(re) = PyRegex::compile(
-        r"`(?:[A-Za-z0-9_./~]|\$[({])(?:[^`\\\n]|\\.)*`",
-        false,
-    ) else {
+    let Ok(re) = PyRegex::compile(r"`(?:[A-Za-z0-9_./~]|\$[({])(?:[^`\\\n]|\\.)*`", false) else {
         return Vec::new();
     };
     guarded_finditer(haystack, re.re(), |text, candidate| {
-        candidate.start == 0
-            || char_before(text, candidate.start).is_none_or(|(_, c)| c != '`')
+        candidate.start == 0 || char_before(text, candidate.start).is_none_or(|(_, c)| c != '`')
     })
 }
 
@@ -1247,56 +1229,206 @@ pub fn glued_backtick_candidate_finditer(haystack: &str) -> Vec<Candidate> {
 /// The frozen 2026-08-20 `_HTML_EVENT_HANDLER_ATTRS` set, in reference order
 /// (extracted verbatim from the canonical pattern source).
 pub const HTML_EVENT_HANDLER_ATTRS: &[&str] = &[
-    "onwebkitplaybacktargetavailabilitychanged", "oncontentvisibilityautostatechange",
-    "onwebkitpresentationmodechanged", "onwebkitmouseforcewillbegin",
-    "onwebkitanimationiteration", "onsecuritypolicyviolation",
-    "onwebkitmouseforcechanged", "onvalidationstatuschange",
-    "onwebkitfullscreenchange", "onwebkitwillrevealbottom", "onwebkitanimationstart",
-    "onwebkitmouseforcedown", "onbeforescriptexecute", "onmozfullscreenchange",
-    "onwebkittransitionend", "onafterscriptexecute", "onanimationiteration",
-    "onlostpointercapture", "onscrollsnapchanging", "onunhandledrejection",
-    "onwebkitanimationend", "onwebkitmouseforceup", "ondeviceorientation",
-    "ongotpointercapture", "onbeforedeactivate", "onfullscreenchange",
-    "onpointerrawupdate", "onreadystatechange", "onrejectionhandled",
-    "onscrollsnapchange", "ontransitioncancel", "onanimationcancel",
-    "onbeforeeditfocus", "oncontextrestored", "ondatasetcomplete",
-    "onselectionchange", "ontransitionstart", "onanimationstart",
-    "onbeforeactivate", "oncanplaythrough", "ondatasetchanged",
-    "ondurationchange", "onlanguagechange", "onlayoutcomplete",
-    "onloadedmetadata", "onpropertychange", "oncontrolselect",
-    "ondataavailable", "ongesturechange", "onmediacomplete",
-    "onpointercancel", "onpromptdismiss", "ontransitionend", "ontransitionrun",
-    "onwebkitneedkey", "onanimationend", "onbeforetoggle", "onbeforeunload",
-    "onbeforeupdate", "ondevicemotion", "onfilterchange", "ongesturestart",
-    "onmessageerror", "onpointerenter", "onpointerleave", "onpromptaction",
-    "onsyncrestored", "onvolumechange", "onafterupdate", "onbeforeinput",
-    "onbeforematch", "onbeforepaste", "onbeforeprint", "oncontextlost",
-    "oncontextmenu", "onerrorupdate", "onlosecapture", "onpointerdown",
-    "onpointermove", "onpointerover", "onresizestart", "onrowinserted",
-    "onselectstart", "ontouchcancel", "ontrackchange", "onafterprint",
-    "onbeforecopy", "oncellchange", "ondeactivate", "ongestureend",
-    "onhashchange", "onloadeddata", "onmediaerror", "onmouseenter",
-    "onmouseleave", "onmousewheel", "onpagereveal", "onpointerout",
-    "onratechange", "onslotchange", "ontimeupdate", "ontouchstart",
-    "onbeforecut", "oncuechange", "ondragenter", "ondragleave",
-    "ondragstart", "onloadstart", "onmousedown", "onmousemove",
-    "onmouseover", "onmovestart", "onoutofsync", "onpointerup",
-    "onresizeend", "onrowdelete", "onrowsenter", "onscrollend",
-    "ontimeerror", "ontouchmove", "onactivate", "onauxclick", "ondblclick",
-    "ondragdrop", "ondragexit", "ondragover", "onfocusout", "onformdata",
-    "onkeypress", "onlocation", "onmouseout", "onpagehide", "onpageshow",
-    "onpageswap", "onpopstate", "onprogress", "ontouchend", "oncanplay",
-    "oncommand", "ondragend", "onemptied", "onfocusin", "oninvalid",
-    "onkeydown", "onmessage", "onmouseup", "onmoveend", "onoffline",
-    "onplaying", "onreverse", "onrowexit", "onseeking", "onstalled",
-    "onstorage", "onsuspend", "onurlflip", "onwaiting", "onbounce",
-    "oncancel", "onchange", "onfinish", "ononline", "onrepeat", "onresize",
-    "onresume", "onscroll", "onsearch", "onseeked", "onselect", "onsubmit",
-    "ontoggle", "onunload", "onabort", "onbegin", "onclick", "onclose",
-    "onended", "onerror", "onfocus", "oninput", "onkeyup", "onpaste",
-    "onpause", "onreset", "onstart", "onwheel", "onblur", "oncopy",
-    "ondrag", "ondrop", "onhelp", "onload", "onmove", "onplay", "onredo",
-    "onseek", "onstop", "onundo", "oncut", "onend",
+    "onwebkitplaybacktargetavailabilitychanged",
+    "oncontentvisibilityautostatechange",
+    "onwebkitpresentationmodechanged",
+    "onwebkitmouseforcewillbegin",
+    "onwebkitanimationiteration",
+    "onsecuritypolicyviolation",
+    "onwebkitmouseforcechanged",
+    "onvalidationstatuschange",
+    "onwebkitfullscreenchange",
+    "onwebkitwillrevealbottom",
+    "onwebkitanimationstart",
+    "onwebkitmouseforcedown",
+    "onbeforescriptexecute",
+    "onmozfullscreenchange",
+    "onwebkittransitionend",
+    "onafterscriptexecute",
+    "onanimationiteration",
+    "onlostpointercapture",
+    "onscrollsnapchanging",
+    "onunhandledrejection",
+    "onwebkitanimationend",
+    "onwebkitmouseforceup",
+    "ondeviceorientation",
+    "ongotpointercapture",
+    "onbeforedeactivate",
+    "onfullscreenchange",
+    "onpointerrawupdate",
+    "onreadystatechange",
+    "onrejectionhandled",
+    "onscrollsnapchange",
+    "ontransitioncancel",
+    "onanimationcancel",
+    "onbeforeeditfocus",
+    "oncontextrestored",
+    "ondatasetcomplete",
+    "onselectionchange",
+    "ontransitionstart",
+    "onanimationstart",
+    "onbeforeactivate",
+    "oncanplaythrough",
+    "ondatasetchanged",
+    "ondurationchange",
+    "onlanguagechange",
+    "onlayoutcomplete",
+    "onloadedmetadata",
+    "onpropertychange",
+    "oncontrolselect",
+    "ondataavailable",
+    "ongesturechange",
+    "onmediacomplete",
+    "onpointercancel",
+    "onpromptdismiss",
+    "ontransitionend",
+    "ontransitionrun",
+    "onwebkitneedkey",
+    "onanimationend",
+    "onbeforetoggle",
+    "onbeforeunload",
+    "onbeforeupdate",
+    "ondevicemotion",
+    "onfilterchange",
+    "ongesturestart",
+    "onmessageerror",
+    "onpointerenter",
+    "onpointerleave",
+    "onpromptaction",
+    "onsyncrestored",
+    "onvolumechange",
+    "onafterupdate",
+    "onbeforeinput",
+    "onbeforematch",
+    "onbeforepaste",
+    "onbeforeprint",
+    "oncontextlost",
+    "oncontextmenu",
+    "onerrorupdate",
+    "onlosecapture",
+    "onpointerdown",
+    "onpointermove",
+    "onpointerover",
+    "onresizestart",
+    "onrowinserted",
+    "onselectstart",
+    "ontouchcancel",
+    "ontrackchange",
+    "onafterprint",
+    "onbeforecopy",
+    "oncellchange",
+    "ondeactivate",
+    "ongestureend",
+    "onhashchange",
+    "onloadeddata",
+    "onmediaerror",
+    "onmouseenter",
+    "onmouseleave",
+    "onmousewheel",
+    "onpagereveal",
+    "onpointerout",
+    "onratechange",
+    "onslotchange",
+    "ontimeupdate",
+    "ontouchstart",
+    "onbeforecut",
+    "oncuechange",
+    "ondragenter",
+    "ondragleave",
+    "ondragstart",
+    "onloadstart",
+    "onmousedown",
+    "onmousemove",
+    "onmouseover",
+    "onmovestart",
+    "onoutofsync",
+    "onpointerup",
+    "onresizeend",
+    "onrowdelete",
+    "onrowsenter",
+    "onscrollend",
+    "ontimeerror",
+    "ontouchmove",
+    "onactivate",
+    "onauxclick",
+    "ondblclick",
+    "ondragdrop",
+    "ondragexit",
+    "ondragover",
+    "onfocusout",
+    "onformdata",
+    "onkeypress",
+    "onlocation",
+    "onmouseout",
+    "onpagehide",
+    "onpageshow",
+    "onpageswap",
+    "onpopstate",
+    "onprogress",
+    "ontouchend",
+    "oncanplay",
+    "oncommand",
+    "ondragend",
+    "onemptied",
+    "onfocusin",
+    "oninvalid",
+    "onkeydown",
+    "onmessage",
+    "onmouseup",
+    "onmoveend",
+    "onoffline",
+    "onplaying",
+    "onreverse",
+    "onrowexit",
+    "onseeking",
+    "onstalled",
+    "onstorage",
+    "onsuspend",
+    "onurlflip",
+    "onwaiting",
+    "onbounce",
+    "oncancel",
+    "onchange",
+    "onfinish",
+    "ononline",
+    "onrepeat",
+    "onresize",
+    "onresume",
+    "onscroll",
+    "onsearch",
+    "onseeked",
+    "onselect",
+    "onsubmit",
+    "ontoggle",
+    "onunload",
+    "onabort",
+    "onbegin",
+    "onclick",
+    "onclose",
+    "onended",
+    "onerror",
+    "onfocus",
+    "oninput",
+    "onkeyup",
+    "onpaste",
+    "onpause",
+    "onreset",
+    "onstart",
+    "onwheel",
+    "onblur",
+    "oncopy",
+    "ondrag",
+    "ondrop",
+    "onhelp",
+    "onload",
+    "onmove",
+    "onplay",
+    "onredo",
+    "onseek",
+    "onstop",
+    "onundo",
+    "oncut",
+    "onend",
 ];
 
 fn ascii_starts_with_ignore_case(haystack: &str, pos: usize, needle: &str) -> bool {
@@ -1312,29 +1444,25 @@ fn ascii_starts_with_ignore_case(haystack: &str, pos: usize, needle: &str) -> bo
 
 /// The value part: `\s*=\s{0,20}(?:["'][^"']*["']|[^\s>]+)`, returning the end.
 fn event_handler_value_end(haystack: &str, pos: usize) -> Option<usize> {
-    let mut cursor = walk_forward_while(haystack, pos, |c| c.is_whitespace());
+    let mut cursor = walk_forward_while(haystack, pos, char::is_whitespace);
     if char_at(haystack, cursor).map(|(_, c)| c) != Some('=') {
         return None;
     }
     cursor = char_at(haystack, cursor).map_or(cursor, |(i, c)| i + c.len_utf8());
     // `\s{0,20}`
     let mut taken = 0usize;
-    while taken < 20
-        && char_at(haystack, cursor).is_some_and(|(_, c)| c.is_whitespace())
-    {
+    while taken < 20 && char_at(haystack, cursor).is_some_and(|(_, c)| c.is_whitespace()) {
         cursor = char_at(haystack, cursor).map_or(cursor, |(i, c)| i + c.len_utf8());
         taken += 1;
     }
     match char_at(haystack, cursor).map(|(_, c)| c) {
         Some(quote @ ('"' | '\'')) => {
-            // `["'][^"']*["']`: the body excludes BOTH quote characters
+            // `["'][^"']*["']`: the body excludes BOTH quote characters and
+            // the FIRST quote encountered ends the value (either flavor)
             let mut scan = cursor + quote.len_utf8();
             while let Some((i, c)) = char_at(haystack, scan) {
-                if c == quote {
-                    return Some(i + c.len_utf8());
-                }
                 if c == '"' || c == '\'' {
-                    return None;
+                    return Some(i + c.len_utf8());
                 }
                 scan = i + c.len_utf8();
             }
@@ -1348,14 +1476,42 @@ fn event_handler_value_end(haystack: &str, pos: usize) -> Option<usize> {
     }
 }
 
+/// `(?<!=)(?<!=\")(?<!=')` evaluated at the whitespace/slash run start: the
+/// 1-char lookbehind rejects a bare `=`; the 2-char lookbehinds reject the
+/// sequences `="` and `='`.
+fn event_handler_lookbehind_ok(haystack: &str, run_start: usize) -> bool {
+    let Some((c1_pos, c1)) = char_before(haystack, run_start) else {
+        return true; // nothing before the run: the lookbehinds pass trivially
+    };
+    if c1 == '=' {
+        return false;
+    }
+    if c1 == '"' || c1 == '\'' {
+        let quoted_after_equals = char_before(haystack, c1_pos).is_some_and(|(_, c2)| c2 == '=');
+        if quoted_after_equals {
+            return false;
+        }
+    }
+    true
+}
+
+/// The maximal whitespace/slash run ending at/just before `run_start`.
+fn event_handler_run_end(haystack: &str, run_start: usize) -> usize {
+    let mut pos = run_start;
+    while char_at(haystack, pos).is_some_and(|(_, rc)| rc.is_whitespace() || rc == '/') {
+        pos = char_at(haystack, pos).map_or(haystack.len(), |(i, rc)| i + rc.len_utf8());
+    }
+    pos
+}
+
 /// The monster pattern:
 /// `(?:<[A-Za-z/](?:[^<>]*[^<>\s/])?(?<!=)(?<!=\")(?<!=')[\s/]+(?:NAMES)\s*=\s{0,20}(?:["'][^"']*["']|[^\s>]+))`.
 ///
-/// The three lookbehinds sit between the attribute run and the whitespace run.
-/// The attribute group must end with a non-space, non-slash character, so the
-/// whitespace run before a candidate name is the maximal one and its start is
-/// fixed; the guard is therefore a boundary-character check on that start,
-/// exactly mirroring the lookbehinds.
+/// The three lookbehinds sit between the attribute group and the whitespace
+/// run, and the group is greedy: the engine tries the RIGHTMOST run split
+/// first (longest attribute group) and backtracks leftward, with the
+/// group-absent split (right after the tag-open letter) last. Each split's
+/// guard is a 1-2 char sequence check on the characters before the run.
 #[must_use]
 pub fn xss_event_handler_finditer(haystack: &str) -> Vec<Candidate> {
     let Ok(tag_open) = PyRegex::compile(r"<[A-Za-z/]", false) else {
@@ -1367,44 +1523,38 @@ pub fn xss_event_handler_finditer(haystack: &str) -> Vec<Candidate> {
         if open.start() < resume {
             continue;
         }
-        let after_open = open.end();
-        let mut cursor = after_open;
+        // whitespace/slash run starts in the attribute region (bounded by the
+        // next angle bracket), leftmost-first
+        let mut runs: Vec<usize> = Vec::new();
+        let mut cursor = open.end();
+        let mut open_run: Option<usize> = None;
         while let Some((offset, c)) = char_at(haystack, cursor) {
-            // group1 is `[^<>]*` and may not cross an angle bracket
             if c == '<' || c == '>' {
                 break;
             }
             if c.is_whitespace() || c == '/' {
-                // the maximal whitespace/slash run is the match's `[\s/]+`
-                let mut name_pos = cursor;
-                while char_at(haystack, name_pos)
-                    .is_some_and(|(_, rc)| rc.is_whitespace() || rc == '/')
-                {
-                    name_pos = char_at(haystack, name_pos)
-                        .map_or(haystack.len(), |(i, rc)| i + rc.len_utf8());
+                if open_run.is_none() {
+                    open_run = Some(offset);
                 }
-                let boundary_ok = if cursor == after_open {
-                    // attribute group absent: the lookbehinds still apply to
-                    // the char before the run, which is the tag-open letter
-                    char_before(haystack, cursor).is_some_and(|(_, bc)| {
-                        !matches!(bc, '=' | '"' | '\'')
-                    })
-                } else {
-                    char_before(haystack, cursor).is_some_and(|(_, bc)| {
-                        !matches!(bc, '=' | '"' | '\'' | '<' | '>')
-                    })
-                };
-                if boundary_ok
-                    && let Some(end) = try_event_name_value(haystack, name_pos)
-                {
-                    matches.push(Candidate::new(open.start(), end));
-                    resume = end;
-                    break;
-                }
-                cursor = name_pos;
-                continue;
+            } else if let Some(r) = open_run.take() {
+                runs.push(r);
             }
             cursor = offset + c.len_utf8();
+        }
+        if let Some(r) = open_run {
+            runs.push(r);
+        }
+        // the greedy attribute group tries the longest run first
+        runs.reverse();
+        for r in runs {
+            let run_end = event_handler_run_end(haystack, r);
+            if event_handler_lookbehind_ok(haystack, r)
+                && let Some(end) = try_event_name_value(haystack, run_end)
+            {
+                matches.push(Candidate::new(open.start(), end));
+                resume = end;
+                break;
+            }
         }
     }
     matches
@@ -1498,13 +1648,19 @@ mod tests {
     #[test]
     fn sensitive_wp_admin_path() {
         assert_eq!(sensitive_path_wp_admin("/wp-login.php").len(), 1);
-        assert_eq!(sensitive_path_wp_admin("/wp-admin/setup-config.php").len(), 1);
+        assert_eq!(
+            sensitive_path_wp_admin("/wp-admin/setup-config.php").len(),
+            1
+        );
         assert!(sensitive_path_wp_admin("/admin/login/?next=/admin/").is_empty());
     }
 
     #[test]
     fn sensitive_backup_path() {
-        assert_eq!(sensitive_path_scan_ext("/config.php.bak", BACKUP_EXTENSIONS).len(), 1);
+        assert_eq!(
+            sensitive_path_scan_ext("/config.php.bak", BACKUP_EXTENSIONS).len(),
+            1
+        );
         assert!(sensitive_path_scan_ext("/config.php", BACKUP_EXTENSIONS).is_empty());
     }
 
@@ -1538,9 +1694,55 @@ mod tests {
     }
 
     #[test]
-    fn event_handler_quoted_value_rejected_before_run() {
-        // quote directly before the whitespace run: lookbehind blocks
-        assert!(xss_event_handler_finditer("<img src=\"x\" onerror=alert(1)>").is_empty());
+    fn event_handler_quoted_attr_value_still_matches() {
+        // oracle-verified: the lookbehinds reject the SEQUENCES `=`/`="/`='`
+        // before the run; a bare `"` before the run does not block, and the
+        // greedy group picks the rightmost split (`onerror`)
+        let ms = xss_event_handler_finditer("<img src=\"x\" onerror=alert(1)>");
+        assert_eq!(ms.len(), 1);
+        assert_eq!(
+            ms[0].text("<img src=\"x\" onerror=alert(1)>"),
+            "<img src=\"x\" onerror=alert(1)"
+        );
+    }
+
+    #[test]
+    fn event_handler_greedy_group_picks_rightmost_split() {
+        // oracle-verified: the greedy attribute group tries the rightmost
+        // run first, so the second handler wins the match
+        let text = "<a b onclick=x c onload=y>";
+        let ms = xss_event_handler_finditer(text);
+        assert_eq!(ms.len(), 1);
+        assert_eq!(ms[0].text(text), "<a b onclick=x c onload=y");
+    }
+
+    #[test]
+    fn event_handler_equals_sequence_lookbehind_blocks() {
+        // `="` directly before the run: the 2-char lookbehind blocks, and no
+        // other split can rescue the match
+        assert!(xss_event_handler_finditer("<a =\" onclick=x>").is_empty());
+        // a bare `=` directly before the run: the 1-char lookbehind blocks
+        assert!(xss_event_handler_finditer("<img src= onerror=x>").is_empty());
+        // oracle-verified: `=x` before the run does NOT block (rightmost
+        // split sees `x`, not `=`)
+        let ms = xss_event_handler_finditer("<img =x onerror=alert(1)>");
+        assert_eq!(ms.len(), 1);
+        assert_eq!(
+            ms[0].text("<img =x onerror=alert(1)>"),
+            "<img =x onerror=alert(1)"
+        );
+    }
+
+    #[test]
+    fn event_handler_nested_quote_value_ends_at_first_quote() {
+        // the value body excludes both quote flavors, and the first quote
+        // encountered closes the value (either flavor): `"alert('`
+        let ms = xss_event_handler_finditer("<div onmouseover=\"alert('x')\">hover</div>");
+        assert_eq!(ms.len(), 1);
+        assert_eq!(
+            ms[0].text("<div onmouseover=\"alert('x')\">hover</div>"),
+            "<div onmouseover=\"alert('"
+        );
     }
 
     #[test]
@@ -1552,8 +1754,8 @@ mod tests {
 
     #[test]
     fn backtick_candidate_guard() {
-        let compiled = PyRegex::compile(r"`(?:[A-Za-z0-9_./~]|\$[({])(?:[^`\\\n]|\\.)*`", false)
-            .unwrap();
+        let compiled =
+            PyRegex::compile(r"`(?:[A-Za-z0-9_./~]|\$[({])(?:[^`\\\n]|\\.)*`", false).unwrap();
         let ms = glued_backtick_candidate_finditer("a`id`b");
         assert_eq!(ms.len(), 1);
         let _ = compiled;

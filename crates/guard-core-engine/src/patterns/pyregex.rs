@@ -20,6 +20,17 @@
 //! here; those table entries are served by structural matchers instead.
 
 use regex::Regex;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+
+/// Process-wide compile cache. The reference compiles every pattern once at
+/// module import; several structural helpers here compile helper sources
+/// per call. `Regex` clone is an O(1) Arc clone, so caching compiled regexes
+/// keyed by (source, case) makes every per-call compile a lookup after the
+/// first use. The key set is bounded by the fixed source strings in this
+/// crate.
+static COMPILE_CACHE: LazyLock<Mutex<HashMap<(String, bool), Regex>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub struct PyRegex {
     /// Canonical Python-style source; carried verbatim on threats.
@@ -38,11 +49,10 @@ fn translate(source: &str) -> String {
                 if next == 'Z' {
                     out.pop();
                     out.push_str("\\z");
-                    chars.next();
                 } else {
                     out.push(next);
-                    chars.next();
                 }
+                chars.next();
             }
             continue;
         }
@@ -75,6 +85,15 @@ impl PyRegex {
         } else {
             ignore_case || source.starts_with("(?i)")
         };
+        let cache_key = (source.to_owned(), effective_case);
+        if let Ok(cache) = COMPILE_CACHE.lock()
+            && let Some(re) = cache.get(&cache_key)
+        {
+            return Ok(Self {
+                source: source.to_owned(),
+                re: re.clone(),
+            });
+        }
         let translated = translate(source);
         let mut pattern = String::with_capacity(translated.len() + 8);
         if effective_case && !translated.starts_with("(?i)") {
@@ -82,13 +101,17 @@ impl PyRegex {
         }
         pattern.push_str(&translated);
         let re = Regex::new(&pattern).map_err(|e| format!("{source}: {e}"))?;
+        if let Ok(mut cache) = COMPILE_CACHE.lock() {
+            cache.insert(cache_key, re.clone());
+        }
         Ok(Self {
             source: source.to_owned(),
             re,
         })
     }
 
-    pub fn re(&self) -> &Regex {
+    #[must_use]
+    pub const fn re(&self) -> &Regex {
         &self.re
     }
 }
@@ -107,7 +130,8 @@ pub struct Candidate {
 }
 
 impl Candidate {
-    pub fn new(start: usize, end: usize) -> Self {
+    #[must_use]
+    pub const fn new(start: usize, end: usize) -> Self {
         Self { start, end }
     }
 

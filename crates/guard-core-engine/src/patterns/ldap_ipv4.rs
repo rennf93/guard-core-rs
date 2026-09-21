@@ -1,20 +1,22 @@
 //! LDAP breakout window analysis and legacy IPv4 host validation, ported
 //! from `guard_core/handlers/_suspatterns_ldap_ipv4.py` (spec 4.0.2).
 
-use super::chars_util::char_before;
 use super::pyregex::{Candidate, PyRegex};
 
-pub const LDAP_WILDCARD_CHAIN_RE: &str = r#"\*\)[|&]?\(+\s*(?::)?(?:[a-zA-Z][\w.-]*|\d+(?:\.\d+)*)(?:;[\w.-]+)*(?::[\w.-]+)*\s*:?="#;
+pub const LDAP_WILDCARD_CHAIN_RE: &str =
+    r"\*\)[|&]?\(+\s*(?::)?(?:[a-zA-Z][\w.-]*|\d+(?:\.\d+)*)(?:;[\w.-]+)*(?::[\w.-]+)*\s*:?=";
 pub const LDAP_WILDCARD_EQUALS_RE: &str = r#"\*\s*\)+\s*(?:[|&!]\s*)?\(+\s*(?:[&|!]|(?::)?(?:[a-zA-Z][\w.-]*|\d+(?:\.\d+)*)(?:;[\w.-]+)*(?::[\w.-]+)*\s*:?=#";
 pub const LDAP_PAREN_BREAKOUT_RE: &str = r#"\)\s*\(\s*(?:[&|!]|(?::)?(?:[a-zA-Z][\w.-]*|\d+(?:\.\d+)*)(?:;[\w.-]+)*(?::[\w.-]+)*\s*:?[=~<>])"#;
 pub const LDAP_PAREN_CONJUNCTION_RE: &str = r"\(\s*[&|]\s*";
 
 pub const LEGACY_IPV4_HOST_RE: &str = r"://(?:[^/@\s]*@)?((?:0[xX][0-9a-fA-F]+|0[0-7]+|[1-9]\d*|0)(?:\.(?:0[xX][0-9a-fA-F]+|0[0-7]+|[1-9]\d*|0)){0,3})(?=[:/\s]|$)";
 
-/// Structural matcher for `_LEGACY_IPV4_HOST_RE`: the terminating lookahead
-/// `(?=[:/\s]|$)` is enforced as a suffix check on the host part. If the
-/// greedy host fails the guard, every shorter host at the same start ends in
-/// a host character (never a terminator), so the check is exact.
+/// Structural matcher for `_LEGACY_IPV4_HOST_RE`.
+///
+/// The terminating lookahead `(?=[:/\s]|$)` is enforced as a suffix check on
+/// the host part. If the greedy host fails the guard, every shorter host at
+/// the same start ends in a host character (never a terminator), so the check
+/// is exact.
 #[must_use]
 pub fn legacy_ipv4_finditer(haystack: &str) -> Vec<Candidate> {
     let Ok(compiled) = PyRegex::compile(
@@ -129,34 +131,53 @@ pub fn legacy_ipv4_match_is_blocked(candidate_text: &str) -> bool {
     let Some(rest) = candidate_text.strip_prefix("://") else {
         return false;
     };
-    let host = match rest.find('@') {
-        Some(at) => &rest[at + 1..],
-        None => rest,
-    };
+    let host = rest.find('@').map_or(rest, |at| &rest[at + 1..]);
     let Some(ip) = decode_legacy_ipv4_host(host) else {
         return false;
     };
     is_blocked_legacy_ipv4(ip)
 }
 
-struct BreakoutWindow {
-    window: String,
-    depth: i64,
-    depth_unresolved: bool,
+/// Char-space view of the haystack: code-point indexing mirrors the Python
+/// reference (`match.string` indexing is by code point).
+struct CharSpan {
+    chars: Vec<char>,
+    /// byte offset of each char index (len = `chars.len()` + 1, last = text end)
+    byte_at: Vec<usize>,
 }
 
-fn ldap_breakout_backward_window(text: &str, close_paren_pos: usize) -> BreakoutWindow {
-    let backward_start = close_paren_pos.saturating_sub(40);
-    let mut position: i64 = close_paren_pos as i64;
-    let mut depth = 0i64;
-    loop {
-        if position < backward_start as i64 {
-            break;
+impl CharSpan {
+    fn new(text: &str) -> Self {
+        let chars: Vec<char> = text.chars().collect();
+        let mut byte_at = Vec::with_capacity(chars.len() + 1);
+        byte_at.push(0);
+        for (i, _) in text.char_indices().skip(1) {
+            byte_at.push(i);
         }
-        let Some(c) = text.get(position as usize..).and_then(|s| s.chars().next())
-        else {
-            break;
-        };
+        byte_at.push(text.len());
+        Self { chars, byte_at }
+    }
+
+    fn cp_of_byte(&self, byte: usize) -> usize {
+        self.byte_at.partition_point(|&b| b < byte)
+    }
+}
+
+/// `_ldap_breakout_backward_window`: walks LEFT from `close_paren_pos - 1`
+/// (the close paren itself is never inspected) over at most
+/// `_LDAP_BREAKOUT_LOCAL_SCAN_CHARS` code points, stopping at boundary
+/// characters; the window excludes the stopping character.
+#[allow(
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    reason = "backward scan over code-point indices; positions stay within 0..=close_paren_pos, so the casts never truncate or lose sign"
+)]
+fn ldap_breakout_backward_window(chars: &[char], close_paren_pos: usize) -> (String, i64, bool) {
+    let backward_start = close_paren_pos.saturating_sub(40);
+    let mut position: i64 = close_paren_pos as i64 - 1;
+    let mut depth: i64 = 0;
+    while position >= backward_start as i64 {
+        let c = chars[position as usize];
         if matches!(c, '"' | '\'' | '\n' | '&') {
             break;
         }
@@ -165,80 +186,64 @@ fn ldap_breakout_backward_window(text: &str, close_paren_pos: usize) -> Breakout
             '(' => depth += 1,
             _ => {}
         }
-        // step left one char; past the start means the window opened at 0
-        match if position == 0 {
-            None
-        } else {
-            char_before(text, position as usize).map(|(i, _)| i as i64)
-        } {
-            Some(prev) => position = prev,
-            None => {
-                position = -1;
-                break;
-            }
-        }
+        position -= 1;
     }
     let from = (position + 1).max(0) as usize;
-    let window = text[from..close_paren_pos.min(text.len())].to_owned();
+    let window = chars[from..close_paren_pos].iter().collect();
     let depth_unresolved = backward_start > 0 && position < backward_start as i64;
-    BreakoutWindow {
-        window,
-        depth,
-        depth_unresolved,
-    }
+    (window, depth, depth_unresolved)
 }
 
+/// `_ldap_next_candidate_scan_limit` in char space: end of the next match of
+/// the same pattern at/after `after` (char index), else the text length.
 fn ldap_next_candidate_scan_limit(
     compiled: &PyRegex,
-    text: &str,
-    candidate: &Candidate,
+    haystack: &str,
+    span: &CharSpan,
+    after: usize,
 ) -> usize {
+    let byte_after = span.byte_at[after.min(span.chars.len())];
     compiled
         .re()
-        .find_at(text, candidate.end)
-        .map_or(text.len(), |m| m.end())
+        .find_at(haystack, byte_after)
+        .map_or(span.chars.len(), |m| span.cp_of_byte(m.end()))
 }
 
-/// Forward extent through the filter expression, respecting paren nesting.
+/// `_ldap_filter_expression_forward_extent` in char space.
 #[must_use]
-fn ldap_filter_expression_forward_extent(
-    text: &str,
-    start: usize,
-    scan_limit: usize,
-) -> usize {
+fn ldap_filter_expression_forward_extent(chars: &[char], start: usize, scan_limit: usize) -> usize {
     let mut position = start;
-    let mut depth = 0i64;
+    let mut depth: i64 = 0;
     loop {
-        let Some(next) = text[position..]
-            .char_indices()
-            .find(|(_, c)| matches!(c, '(' | ')' | '"' | '\'' | '\n'))
-            .map(|(i, _)| position + i)
+        let Some(rel) = chars[position.min(scan_limit)..scan_limit]
+            .iter()
+            .position(|&c| matches!(c, '(' | ')' | '"' | '\'' | '\n'))
         else {
             return scan_limit;
         };
-        if next >= scan_limit {
-            return scan_limit;
+        let at = position + rel;
+        match chars[at] {
+            '"' | '\'' | '\n' => return at,
+            '(' => depth += 1,
+            ')' if depth == 0 => return at,
+            ')' => depth -= 1,
+            _ => unreachable!("position filter above"),
         }
-        match text[next..].chars().next() {
-            Some('"' | '\'' | '\n') => return next,
-            Some('(') => depth += 1,
-            Some(')') if depth == 0 => return next,
-            Some(')') => depth -= 1,
-            _ => {}
-        }
-        position = next + 1;
+        position = at + 1;
     }
 }
 
 fn ldap_breakout_forward_window(
     compiled: &PyRegex,
-    text: &str,
-    candidate: &Candidate,
+    haystack: &str,
+    span: &CharSpan,
+    candidate_end: usize,
     close_paren_pos: usize,
 ) -> String {
-    let scan_limit = ldap_next_candidate_scan_limit(compiled, text, candidate);
-    let extent = ldap_filter_expression_forward_extent(text, close_paren_pos + 1, scan_limit);
-    text[close_paren_pos..extent].to_owned()
+    let scan_limit = ldap_next_candidate_scan_limit(compiled, haystack, span, candidate_end);
+    let extent =
+        ldap_filter_expression_forward_extent(&span.chars, close_paren_pos + 1, scan_limit);
+    span.chars[close_paren_pos..extent].iter().collect()
 }
 
 fn search_in(source: &str, text: &str) -> bool {
@@ -256,24 +261,27 @@ pub fn ldap_wildcard_chain_is_injection(
     haystack: &str,
     candidate: &Candidate,
 ) -> bool {
-    let text = candidate.text(haystack);
-    let Some(paren_rel) = text.find(')') else {
+    let span = CharSpan::new(haystack);
+    let c_start = span.cp_of_byte(candidate.start);
+    let c_end = span.cp_of_byte(candidate.end);
+    let cand_chars = &span.chars[c_start..c_end];
+    let Some(paren_rel) = cand_chars.iter().position(|&c| c == ')') else {
         return false;
     };
-    let close_paren_pos = candidate.start + paren_rel;
+    let close_paren_pos = c_start + paren_rel;
 
-    let backward = ldap_breakout_backward_window(haystack, close_paren_pos);
-    let forward = ldap_breakout_forward_window(compiled, haystack, candidate, close_paren_pos);
+    let (backward_window, depth, depth_unresolved) =
+        ldap_breakout_backward_window(&span.chars, close_paren_pos);
+    let forward = ldap_breakout_forward_window(compiled, haystack, &span, c_end, close_paren_pos);
 
-    let wildcard_adjacent = text.starts_with('*');
-    let depth_proves_breakout =
-        backward.depth <= 0 && (wildcard_adjacent || !backward.depth_unresolved);
-    let wildcard_clause_end = search_in(r"=[^()]+\*\s*\z", &backward.window);
+    let wildcard_adjacent = cand_chars.first() == Some(&'*');
+    let depth_proves_breakout = depth <= 0 && (wildcard_adjacent || !depth_unresolved);
+    let wildcard_clause_end = search_in(r"=[^()]+\*\s*\z", &backward_window);
     if !(depth_proves_breakout || wildcard_clause_end) {
         return false;
     }
     let attack_token = r"\*|\(\s*[&|!]|\x00|\(\s*\(|~=|>=|<=";
-    search_in(attack_token, &backward.window) || search_in(attack_token, &forward)
+    search_in(attack_token, &backward_window) || search_in(attack_token, &forward)
 }
 
 /// `_ldap_paren_conjunction_is_injection`.
@@ -283,10 +291,12 @@ pub fn ldap_paren_conjunction_is_injection(
     haystack: &str,
     candidate: &Candidate,
 ) -> bool {
-    let scan_limit = ldap_next_candidate_scan_limit(compiled, haystack, candidate);
-    let tail_end = ldap_filter_expression_forward_extent(haystack, candidate.end, scan_limit);
-    let tail = &haystack[candidate.end..tail_end];
-    if search_in(r"\A\s*(?:[!(]|\*)", tail) {
+    let span = CharSpan::new(haystack);
+    let c_end = span.cp_of_byte(candidate.end);
+    let scan_limit = ldap_next_candidate_scan_limit(compiled, haystack, &span, c_end);
+    let tail_end = ldap_filter_expression_forward_extent(&span.chars, c_end, scan_limit);
+    let tail: String = span.chars[c_end..tail_end].iter().collect();
+    if search_in(r"\A\s*(?:[!(]|\*)", &tail) {
         return true;
     }
     if !tail.contains('=') {
@@ -294,7 +304,7 @@ pub fn ldap_paren_conjunction_is_injection(
     }
     search_in(
         r"\A\s*(?::)?(?:[a-zA-Z][\w.-]*|\d+(?:\.\d+)*)(?:;[\w.-]+)*(?::[\w.-]+)*\s*:?=",
-        tail,
+        &tail,
     )
 }
 
@@ -332,9 +342,13 @@ mod tests {
     fn legacy_ipv4_matcher_finds_blocked_host() {
         let ms = legacy_ipv4_finditer("curl http://127.0.0.1:8080/");
         assert_eq!(ms.len(), 1);
-        assert!(legacy_ipv4_match_is_blocked(ms[0].text("curl http://127.0.0.1:8080/")));
+        assert!(legacy_ipv4_match_is_blocked(
+            ms[0].text("curl http://127.0.0.1:8080/")
+        ));
         let ms = legacy_ipv4_finditer("curl http://example.com/");
-        assert!(ms.is_empty() || !legacy_ipv4_match_is_blocked(ms[0].text("curl http://example.com/")));
+        assert!(
+            ms.is_empty() || !legacy_ipv4_match_is_blocked(ms[0].text("curl http://example.com/"))
+        );
     }
 
     #[test]
@@ -344,12 +358,16 @@ mod tests {
         let haystack = "(&(objectClass=user))";
         let c = compiled.re().find(haystack).unwrap();
         let cand = Candidate::new(c.start(), c.end());
-        assert!(ldap_paren_conjunction_is_injection(&compiled, haystack, &cand));
+        assert!(ldap_paren_conjunction_is_injection(
+            &compiled, haystack, &cand
+        ));
         // a bare conjunction with no followup is rejected
         let haystack = "(|x";
         let c = compiled.re().find(haystack).unwrap();
         let cand = Candidate::new(c.start(), c.end());
-        assert!(!ldap_paren_conjunction_is_injection(&compiled, haystack, &cand));
+        assert!(!ldap_paren_conjunction_is_injection(
+            &compiled, haystack, &cand
+        ));
     }
 
     #[test]
@@ -358,14 +376,25 @@ mod tests {
         let haystack = "(&(cn=*)(!(cn=admin)))";
         let c = compiled.re().find(haystack).unwrap();
         let cand = Candidate::new(c.start(), c.end());
-        assert!(ldap_paren_conjunction_is_injection(&compiled, haystack, &cand));
+        assert!(ldap_paren_conjunction_is_injection(
+            &compiled, haystack, &cand
+        ));
     }
 
     #[test]
     fn wildcard_chain_detects_breakout() {
         let compiled = PyRegex::compile(LDAP_WILDCARD_CHAIN_RE, false).unwrap();
-        // chain shape: `*` `)` `(` attr `=`
-        let haystack = "(uid=*)((mail=";
+        // oracle-verified: an unbalanced preceding `(` keeps depth > 0 and the
+        // backward window carries no wildcard clause end, so this is rejected
+        let haystack = "(uid=*)((mail=*";
+        let c = compiled.re().find(haystack).unwrap();
+        let cand = Candidate::new(c.start(), c.end());
+        assert!(!ldap_wildcard_chain_is_injection(
+            &compiled, haystack, &cand
+        ));
+        // oracle-verified: a preceding `)` balances depth to 0 and the
+        // backward window carries the wildcard attack token
+        let haystack = "x)(uid=*)(mail=*";
         let c = compiled.re().find(haystack).unwrap();
         let cand = Candidate::new(c.start(), c.end());
         assert!(ldap_wildcard_chain_is_injection(&compiled, haystack, &cand));

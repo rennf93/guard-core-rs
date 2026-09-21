@@ -14,7 +14,7 @@ use crate::report::{CaseResult, Status};
 
 #[must_use]
 pub fn run_case(case: &CorpusCase, knobs: &Knobs) -> CaseResult {
-    let verdict = detect::detect(&case.case.input.content, knobs);
+    let verdict = detect::detect(&case.case.input.content, &case.case.input.context, knobs);
     let mut got = verdict.to_value();
     let mut want = case.case.expected.clone();
 

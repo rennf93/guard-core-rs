@@ -1,6 +1,8 @@
-//! Detection wiring: compiles the canonical pattern table and dispatches each
-//! pattern to the same structural matcher, windowed finder, candidate
-//! validator and scan-window bounds as the guard-core spec 4.0.2 reference
+//! Detection wiring for the compiled pattern table and its dispatch.
+//!
+//! Compiles the canonical pattern table and dispatches each pattern to the
+//! same structural matcher, windowed finder, candidate validator and
+//! scan-window bounds as the guard-core spec 4.0.2 reference
 //! (`guard_core/handlers/_suspatterns_regex.py`).
 //!
 //! Residual patterns (lookaround / backreference constructs the `regex`
@@ -51,9 +53,9 @@ fn rewrite_for_crate(source: &str) -> String {
 /// Table ids served by structural matchers or bespoke finders; their
 /// canonical sources do not need to compile for the `regex` crate.
 const STRUCTURAL_IDS: &[usize] = &[
-    3, 9, 12, 21, 27, 33, 42, 45, 62, 63, 64, 75, 78, 79, 90, 91, 92, 98, 99, 101, 102, 103, 104, 106, 107, 109, 110,
-    111, 112, 113, 114, 115, 117, 119, 121, 122, 123, 124, 125, 126, 128, 130, 131, 132, 133,
-    134, 135, 136, 139, 144, 145, 146, 147,
+    3, 9, 12, 21, 27, 33, 42, 45, 62, 63, 64, 75, 78, 79, 90, 91, 92, 98, 99, 101, 102, 103, 104,
+    106, 107, 109, 110, 111, 112, 113, 114, 115, 117, 119, 121, 122, 123, 124, 125, 126, 128, 130,
+    131, 132, 133, 134, 135, 136, 139, 144, 145, 146, 147,
 ];
 
 fn is_structural(id: usize) -> bool {
@@ -68,9 +70,11 @@ pub static COMPILED_TABLE: LazyLock<Vec<CompiledEntry>> = LazyLock::new(|| {
             let re = PyRegex::compile(&rewrite_for_crate(entry.source), ignore_case)
                 .map_err(|e| format!("pattern id {}: {e}", entry.id))
                 .ok();
-            if re.is_none() && !is_structural(entry.id) {
-                panic!("pattern id {} has neither a compiled regex nor a structural matcher", entry.id);
-            }
+            assert!(
+                re.is_some() || is_structural(entry.id),
+                "pattern id {} has neither a compiled regex nor a structural matcher",
+                entry.id
+            );
             CompiledEntry {
                 entry: table::TableEntry {
                     id: entry.id,
@@ -107,7 +111,9 @@ fn candidate_accepts(
         43 => shell_validators::dollar_substitution_pair_is_injection(haystack, candidate, context),
         58 => shell_validators::brace_expansion_is_dangerous_command(text),
         59 => shell_validators::quote_splice_token_is_dangerous_command(text),
-        60 => shell_validators::glob_wildcard_token_is_dangerous_command(haystack, candidate, context),
+        60 => {
+            shell_validators::glob_wildcard_token_is_dangerous_command(haystack, candidate, context)
+        }
         66 | 67 | 69 => {
             let Some(compiled) = entry.re.as_ref() else {
                 return true;
@@ -121,6 +127,7 @@ fn candidate_accepts(
             ldap_ipv4::ldap_paren_conjunction_is_injection(compiled, haystack, &candidate)
         }
         105 => ldap_ipv4::source_extension_path_is_probe(context),
+        79 => ldap_ipv4::legacy_ipv4_match_is_blocked(text),
         152 => {
             // group one (`c<module>\n<ident>\n`) ends after the second newline
             let group_one_end = candidate.start
@@ -128,7 +135,9 @@ fn candidate_accepts(
                     .find('\n')
                     .and_then(|rel| {
                         let after_first = candidate.start + rel + 1;
-                        haystack[after_first..].find('\n').map(|r2| after_first + r2 + 1)
+                        haystack[after_first..]
+                            .find('\n')
+                            .map(|r2| after_first + r2 + 1)
                     })
                     .unwrap_or(candidate.end);
             pickle::pickle_global_candidate_is_injection(haystack, candidate, group_one_end)
@@ -139,10 +148,7 @@ fn candidate_accepts(
 
 /// The two XML patterns served by bespoke finders inside the scan-window
 /// route, and the generic bounded scan windows (`_SCAN_WINDOW_BOUND_SOURCES`).
-fn scan_window_candidates(
-    entry: &CompiledEntry,
-    haystack: &str,
-) -> Option<Vec<Candidate>> {
+fn scan_window_candidates(entry: &CompiledEntry, haystack: &str) -> Option<Vec<Candidate>> {
     let compiled = entry.re.as_ref()?;
     let id = entry.entry.id;
     let (prefix_src, terminator_src) = match id {
@@ -169,6 +175,10 @@ fn scan_window_candidates(
 /// windowed finder, dedicated scan matcher, bounded scan windows, structural
 /// matchers, then plain full-content search.
 #[must_use]
+#[allow(
+    clippy::too_many_lines,
+    reason = "pattern dispatch mirrors the reference table order; splitting would obscure the 1:1 mapping"
+)]
 fn pattern_candidates(entry: &CompiledEntry, haystack: &str) -> Vec<Candidate> {
     let id = entry.entry.id;
     let source = entry.entry.source;
@@ -213,81 +223,91 @@ fn pattern_candidates(entry: &CompiledEntry, haystack: &str) -> Vec<Candidate> {
         114 => return matchers::sensitive_path_literal(haystack, matchers::DOUBLE_DOT_BAD),
         117 => return matchers::sensitive_path_management(haystack),
         119 => {
-            return matchers::sensitive_path_literal(haystack, &[
-                "actuator",
-                "server-status",
-                "telescope",
-            ]);
+            return matchers::sensitive_path_literal(
+                haystack,
+                &["actuator", "server-status", "telescope"],
+            );
         }
         121 => {
             return matchers::sensitive_path_literal_suffix(
                 haystack,
                 matchers::RECON_APP_BAD,
-                matchers::BadSuffix::DotDashRun,
+                matchers::BadSuffix::DashRun,
             );
         }
         122 => return matchers::sensitive_path_literal(haystack, &["cgi-bin", "cgi-mod"]),
         123 => {
-            return matchers::sensitive_path_literal(haystack, &[
-                "HNAP1",
-                "IPCamDesc.xml",
-                "SDK/webLanguage",
-            ]);
+            return matchers::sensitive_path_literal(
+                haystack,
+                &["HNAP1", "IPCamDesc.xml", "SDK/webLanguage"],
+            );
         }
         124 => return matchers::sensitive_path_literal(haystack, &["language", "languages"]),
         125 => {
-            return matchers::sensitive_path_literal_suffix_dot(haystack, matchers::RECON_README_BAD);
+            return matchers::sensitive_path_literal_suffix_dot(
+                haystack,
+                matchers::RECON_README_BAD,
+            );
         }
         126 => {
-            return matchers::sensitive_path_literal(haystack, &[
-                "sap",
-                "ise",
-                "nidp",
-                "cslu",
-                "rustfs",
-                "developmentserver",
-                "fog/management",
-                "lms/db",
-                "json/login_session",
-                "sms_mp",
-                "plugin/webs_model",
-                "wsman",
-                "am_bin",
-            ]);
+            return matchers::sensitive_path_literal(
+                haystack,
+                &[
+                    "sap",
+                    "ise",
+                    "nidp",
+                    "cslu",
+                    "rustfs",
+                    "developmentserver",
+                    "fog/management",
+                    "lms/db",
+                    "json/login_session",
+                    "sms_mp",
+                    "plugin/webs_model",
+                    "wsman",
+                    "am_bin",
+                ],
+            );
         }
         128 => {
             return matchers::sensitive_path_literal(haystack, &[".openclaw", ".clawdbot"]);
         }
         130 => return matchers::sensitive_path_literal(haystack, &["inicio.html", "inicio.htm"]),
         131 => {
-            return matchers::sensitive_path_literal(haystack, &[
-                ".streamlit",
-                ".gpt-pilot",
-                ".aider",
-                ".cursor",
-                ".windsurf",
-                ".copilot",
-                ".devcontainer",
-            ]);
+            return matchers::sensitive_path_literal(
+                haystack,
+                &[
+                    ".streamlit",
+                    ".gpt-pilot",
+                    ".aider",
+                    ".cursor",
+                    ".windsurf",
+                    ".copilot",
+                    ".devcontainer",
+                ],
+            );
         }
         132 => {
             return matchers::sensitive_path_literal_suffix(
                 haystack,
                 matchers::DOCKERFILE_BAD,
-                matchers::BadSuffix::DotYaml,
+                matchers::BadSuffix::YamlSuffix,
             );
         }
         133 => return matchers::sensitive_path_secrets(haystack),
         134 => return matchers::sensitive_path_literal(haystack, &["autodiscover"]),
         135 => return matchers::sensitive_path_literal(haystack, &["dns-query"]),
         136 => {
-            return matchers::sensitive_path_literal(haystack, &[
-                ".git/refs",
-                ".git/index",
-                ".git/HEAD",
-                ".git/objects",
-                ".git/logs",
-            ]);
+            return matchers::sensitive_path_literal(
+                haystack,
+                &[
+                    ".git/refs",
+                    ".git/index",
+                    ".git/HEAD",
+                    ".git/objects",
+                    ".git/logs",
+                ],
+            );
         }
         139 => {
             return matchers::proto_pollution_assign_finditer(haystack);
@@ -359,7 +379,7 @@ fn pattern_candidates(entry: &CompiledEntry, haystack: &str) -> Vec<Candidate> {
                 .map(|compiled| matchers::ldap_null_byte_attr_decoded(haystack, compiled))
                 .unwrap_or_default();
         }
-        89 | 90 | 91 | 92 => {
+        89..=92 => {
             return file_upload::file_upload_scan_matches(
                 haystack,
                 source,
@@ -408,14 +428,13 @@ fn pattern_candidates(entry: &CompiledEntry, haystack: &str) -> Vec<Candidate> {
         _ => {}
     }
     // plain full-content search
-    match entry.re.as_ref() {
-        Some(compiled) => compiled
+    entry.re.as_ref().map_or_else(Vec::new, |compiled| {
+        compiled
             .re()
             .find_iter(haystack)
             .map(|m| Candidate::new(m.start(), m.end()))
-            .collect(),
-        None => Vec::new(),
-    }
+            .collect()
+    })
 }
 
 fn source_of_id(id: usize) -> &'static str {
@@ -494,6 +513,29 @@ pub fn is_excluded_from_view(source: &str, filter: ViewFilter) -> bool {
     }
 }
 
+/// Table ids of the size-gated family (guard-core-php PR #1 parity): the
+/// `\A`-anchored line-walk and path-segment-loop shapes, skipped when the
+/// view's first line reaches `GATED_PATTERN_MAX_SUBJECT_BYTES` bytes.
+const SIZE_GATED_IDS: &[usize] = &[
+    32, 33, 34, 35, 36, 102, 107, 110, 112, 115, 101, 103, 104, 105, 106, 109, 111, 113, 114, 116,
+    117, 119, 121, 122, 123, 124, 125, 126, 128, 130, 131, 132, 133, 134, 135, 136,
+];
+
+/// `SusPatterns::GATED_PATTERN_MAX_SUBJECT_BYTES` (15 KiB).
+///
+/// The frozen corpus maxes out below the gate, so this never changes
+/// conformance outcomes; it ports the reference skip for large single-line
+/// bodies.
+pub const GATED_PATTERN_MAX_SUBJECT_BYTES: usize = 15_360;
+
+fn first_line_byte_length(content: &str) -> usize {
+    content.find('\n').unwrap_or(content.len())
+}
+
+fn size_gated(content: &str) -> bool {
+    first_line_byte_length(content) >= GATED_PATTERN_MAX_SUBJECT_BYTES
+}
+
 /// One view pass of `_check_regex_patterns`: context filter, per-pattern
 /// dispatch, validator and binary-density gates, first accepted threat each.
 #[must_use]
@@ -505,12 +547,16 @@ pub fn scan_view(
     validator_context: &str,
 ) -> Vec<RegexThreat> {
     let binary_prefix = binary::build_binary_prefix(content);
+    let gating = size_gated(content);
     let mut threats = Vec::new();
     for entry in COMPILED_TABLE.iter() {
         if is_excluded_from_view(entry.entry.source, filter) {
             continue;
         }
         if !skip_filter && !entry.entry.contexts.contains(&normalized_context) {
+            continue;
+        }
+        if gating && SIZE_GATED_IDS.contains(&entry.entry.id) {
             continue;
         }
         if let Some(threat) =
@@ -526,9 +572,8 @@ pub fn scan_view(
 /// when decoding revealed more traversal shapes than the raw view carries.
 #[must_use]
 pub fn decoded_view_traversal_threat(processed: &str, raw_view: &str) -> Option<RegexThreat> {
-    static SHAPE: LazyLock<PyRegex> = LazyLock::new(|| {
-        PyRegex::compile(r"\.\.[\\/]", false).expect("static shape regex")
-    });
+    static SHAPE: LazyLock<PyRegex> =
+        LazyLock::new(|| PyRegex::compile(r"\.\.[\\/]", false).expect("static shape regex"));
     let decoded_matches: Vec<Candidate> = SHAPE
         .re()
         .find_iter(processed)
@@ -729,10 +774,11 @@ mod tests {
     fn xss_event_handler_cases() {
         assert!(threat(3, "<img src=x onerror=alert(1)>").is_some());
         assert!(threat(3, "/search?q=<svg/onload=alert(1)>").is_some());
-        assert!(
-            threat(3, "<img src=\"x\" onerror=alert(1)>").is_none(),
-            "quote before ws run is rejected by the lookbehind"
-        );
+        // oracle-verified: the lookbehinds reject the SEQUENCES `=`/`="/`='`;
+        // a bare `"` before the run does not block, and the greedy group
+        // picks the rightmost split
+        let t = threat(3, "<img src=\"x\" onerror=alert(1)>").expect("quoted attr matches");
+        assert_eq!(t.match_text, "<img src=\"x\" onerror=alert(1)");
         assert!(threat(3, "<b>bold</b> text").is_none());
     }
 
