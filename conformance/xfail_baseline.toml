@@ -1,10 +1,6 @@
 # Expected-fail baseline for the guard-core-rs conformance runner against spec 4.0.2.
-# Generated from a real run of the current engine (preprocessing + semantic analysis only).
-#
-# Why so many xfails: the 4.x reference detect pipeline runs the full regex pattern table
-# across four scan views; the Rust engine has no pattern table yet, so every case expecting
-# regex threats cannot pass. A few cases also pin preprocessor divergences with tailored
-# reasons below.
+# Currently empty: the engine runs the full 4.x detect pipeline (pattern table across
+# the four scan views, semantic analysis, scoring) and passes all 163 corpus cases.
 #
 # Drift semantics (fail-closed, enforced by tests/conformance.rs and src/report.rs):
 #   - failing case NOT listed here -> gate fails (unbaselined failure)
