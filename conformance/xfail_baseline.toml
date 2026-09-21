@@ -12,23 +12,6 @@
 #   - failing case listed here     -> xfail (tolerated, reported four-way)
 spec_version = '4.0.2'
 cases = [
-    { case = 'inclusion_sensitive_recon::incl_data_uri', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::incl_expect_scheme', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::incl_phar_stream', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::incl_php_filter', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::incl_remote_http', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::incl_zip_stream', reason = 'preprocessor divergence: engine strips # and -- markers to end of line; the 4.x reference replaces the marker with a space; rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::recon_actuator', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::recon_joomla_installer', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::recon_phpmyadmin', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::recon_server_status', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::recon_wp_admin', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::recon_wp_login', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::sensitive_aws_credentials', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::sensitive_config_bak', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::sensitive_env_file', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::sensitive_git_config', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'inclusion_sensitive_recon::sensitive_htpasswd', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'misc_injection::code_injection_eval_request', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'misc_injection::code_injection_system_diagnostics', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'misc_injection::deser_java_base64', reason = 'preprocessor divergence: base64 candidate decode is gated on printable ASCII; the 4.x reference decodes anyway and control-byte removal shortens the content; rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
