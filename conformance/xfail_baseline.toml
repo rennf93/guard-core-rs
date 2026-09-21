@@ -12,19 +12,6 @@
 #   - failing case listed here     -> xfail (tolerated, reported four-way)
 spec_version = '4.0.2'
 cases = [
-    { case = 'cmd_injection::cmdi_backtick', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'cmd_injection::cmdi_bash_dash_c', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'cmd_injection::cmdi_curl_sh', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'cmd_injection::cmdi_dollar_paren', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'cmd_injection::cmdi_double_amp_rm', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'cmd_injection::cmdi_eval_base64', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'cmd_injection::cmdi_ifs_obfuscation', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'cmd_injection::cmdi_newline_wget', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'cmd_injection::cmdi_node_child_process', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'cmd_injection::cmdi_php_assert', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'cmd_injection::cmdi_pipe_nc', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'cmd_injection::cmdi_python_exec', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'cmd_injection::cmdi_semicolon_cat', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'context_matrix::ctx_sqli_narrow_body', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'context_matrix::ctx_sqli_narrow_header', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'context_matrix::ctx_trav_header', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
