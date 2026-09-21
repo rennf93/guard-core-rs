@@ -124,15 +124,15 @@ fn bench_truncate_safely(c: &mut Criterion) {
     let mut group = c.benchmark_group("truncate_safely");
 
     group.bench_function("short_noop", |b| {
-        b.iter(|| truncate_safely(CLEAN_SHORT, 1000, true));
+        b.iter(|| truncate_safely(CLEAN_SHORT, 1000, true, 10_000));
     });
     group.bench_function("large_with_attacks", |b| {
         let payload = large_padding_attack();
-        b.iter(|| truncate_safely(&payload, 200, true));
+        b.iter(|| truncate_safely(&payload, 200, true, 10_000));
     });
     group.bench_function("large_no_preserve", |b| {
         let payload = "a".repeat(10_000);
-        b.iter(|| truncate_safely(&payload, 100, false));
+        b.iter(|| truncate_safely(&payload, 100, false, 10_000));
     });
 
     group.finish();

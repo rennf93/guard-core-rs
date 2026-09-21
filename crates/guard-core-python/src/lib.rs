@@ -103,7 +103,7 @@ fn analyze(py: Python<'_>, content: &str) -> PyResult<Py<PyDict>> {
 
     for p in &result.suspicious_patterns {
         let d = PyDict::new(py);
-        d.set_item("type", &p.pattern_type)?;
+        d.set_item("type", p.pattern_type)?;
         d.set_item("pattern", &p.matched)?;
         d.set_item("position", p.position)?;
         d.set_item("context", &p.context)?;

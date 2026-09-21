@@ -79,7 +79,7 @@ pub fn xml_internal_entity_finditer(haystack: &str) -> Vec<Candidate> {
             return matches;
         };
         last_end = boundary + 1;
-        if haystack[boundary..].chars().next() != Some('[') {
+        if !haystack[boundary..].starts_with('[') {
             continue;
         }
         let Some(entity) = first_at_or_after(&entities, boundary + 1) else {
@@ -112,7 +112,11 @@ fn scheme_completion_end(
     }
     let scheme_end = m.end();
     let w3 = compile(r"(?:www\.)?w3\.org/")?;
-    if w3.re().find_at(haystack, scheme_end).is_some_and(|m| m.start() == scheme_end) {
+    if w3
+        .re()
+        .find_at(haystack, scheme_end)
+        .is_some_and(|m| m.start() == scheme_end)
+    {
         return None;
     }
     quoted_url_end(haystack, scheme_end, class12_boundaries, class3_boundaries)
@@ -125,16 +129,20 @@ fn quoted_url_end(
     class3_boundaries: &[usize],
 ) -> Option<usize> {
     let quote2 = first_at_or_after(class3_boundaries, scheme_end)?;
-    if quote2 == scheme_end || haystack[quote2..].chars().next() == Some('>') {
+    if quote2 == scheme_end || haystack[quote2..].starts_with('>') {
         return None;
     }
     let final_boundary = first_at_or_after(class12_boundaries, quote2 + 1)?;
-    (haystack[final_boundary..].chars().next() == Some('>')).then_some(final_boundary)
+    haystack[final_boundary..]
+        .starts_with('>')
+        .then_some(final_boundary)
 }
 
-/// `_xml_xxe_public_external_dtd_finditer`: DOCTYPE before PUBLIC in the same
-/// boundary-delimited run (>= 10 chars apart) plus a quoted http(s):// URL
-/// whose quoted form terminates before the DOCTYPE's final `>`.
+/// `_xml_xxe_public_external_dtd_finditer`.
+///
+/// DOCTYPE before PUBLIC in the same boundary-delimited run (>= 10 chars
+/// apart) plus a quoted http(s):// URL whose quoted form terminates before
+/// the DOCTYPE's final `>`.
 #[must_use]
 pub fn xml_xxe_public_external_dtd_finditer(haystack: &str) -> Vec<Candidate> {
     let doctype_positions = find_positions("<!DOCTYPE", haystack);
@@ -173,17 +181,14 @@ pub fn xml_xxe_public_external_dtd_finditer(haystack: &str) -> Vec<Candidate> {
         let run_start = class12_boundaries
             .iter()
             .copied()
-            .filter(|p| *p <= public_pos)
-            .next_back()
+            .rfind(|p| *p <= public_pos)
             .map_or(0, |p| p + 1);
         let run_end = class12_boundaries
             .iter()
             .copied()
             .find(|p| *p > public_pos)
             .unwrap_or(haystack.len());
-        let Some(doctype_before) =
-            first_at_or_after(&doctype_positions, run_start)
-        else {
+        let Some(doctype_before) = first_at_or_after(&doctype_positions, run_start) else {
             continue;
         };
         if doctype_before >= public_pos.saturating_sub(9) {
@@ -206,7 +211,7 @@ pub fn xml_xxe_public_external_dtd_finditer(haystack: &str) -> Vec<Candidate> {
 }
 
 #[must_use]
-pub fn public_external_dtd_source() -> &'static str {
+pub const fn public_external_dtd_source() -> &'static str {
     PUBLIC_EXTERNAL_DTD_RE
 }
 

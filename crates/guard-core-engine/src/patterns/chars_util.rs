@@ -18,10 +18,7 @@ pub fn char_at(s: &str, byte_idx: usize) -> Option<(usize, char)> {
 /// The character ending just before `byte_idx`, if `byte_idx` is a boundary.
 #[must_use]
 pub fn char_before(s: &str, byte_idx: usize) -> Option<(usize, char)> {
-    s[..byte_idx]
-        .char_indices()
-        .next_back()
-        .map(|(i, c)| (i, c))
+    s[..byte_idx].char_indices().next_back()
 }
 
 /// Walk to the start of the run of `pred` characters ending at `byte_idx`
@@ -71,8 +68,7 @@ pub fn str_rfind_in(s: &str, needle: &str, start: usize, end: usize) -> Option<u
         return None;
     }
     let capped = &s[..limit];
-    capped
-        [start..]
+    capped[start..]
         .rfind(needle)
         .map(|i| i + start)
         .filter(|i| i + needle.len() <= limit)

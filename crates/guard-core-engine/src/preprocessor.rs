@@ -1,9 +1,9 @@
-//! Content preprocessing ported from
-//! `guard_core/detection_engine/preprocessor.py` (spec 4.0.2): the shared
-//! decode chain produces the processed view (null-byte removal, whitespace
-//! collapse, attack-preserving truncation) plus the decoded view handed to the
-//! URL-decoded scan pass, the signal-preserving raw view, and the short-base64
-//! additive view.
+//! Content preprocessing ported from `guard_core/detection_engine/preprocessor.py`.
+//!
+//! Spec 4.0.2: the shared decode chain produces the processed view (null-byte
+//! removal, whitespace collapse, attack-preserving truncation) plus the decoded
+//! view handed to the URL-decoded scan pass, the signal-preserving raw view,
+//! and the short-base64 additive view.
 
 use std::sync::LazyLock;
 
@@ -96,7 +96,7 @@ pub fn normalize_unicode(content: &str) -> String {
 
 /// Python `str.isspace`-compatible whitespace test (`re` `\s` also matches the
 /// file/group/record/unit separators, which `char::is_whitespace` excludes).
-fn py_is_space(c: char) -> bool {
+const fn py_is_space(c: char) -> bool {
     c.is_whitespace() || matches!(c, '\u{1c}'..='\u{1f}')
 }
 
@@ -167,7 +167,10 @@ fn replace_hex_group(re: &Regex, s: &str) -> String {
         u32::from_str_radix(hex, 16)
             .ok()
             .and_then(char::from_u32)
-            .map_or_else(|| caps.get(0).map_or("", |m| m.as_str()).to_owned(), String::from)
+            .map_or_else(
+                || caps.get(0).map_or("", |m| m.as_str()).to_owned(),
+                String::from,
+            )
     })
     .into_owned()
 }
@@ -223,7 +226,10 @@ fn decode_overlong_sequence_at(raw: &[u8], index: usize) -> Option<(char, usize)
     if continuations[0] < first_min || continuations[0] > first_max {
         return None;
     }
-    if continuations[1..].iter().any(|byte| !(*byte >= 0x80 && *byte <= 0xBF)) {
+    if continuations[1..]
+        .iter()
+        .any(|byte| !(*byte >= 0x80 && *byte <= 0xBF))
+    {
         return None;
     }
     let mut codepoint = u32::from(lead & lead_mask);
@@ -300,7 +306,7 @@ fn utf8_ignore(bytes: &[u8]) -> String {
 // base64 candidate decode (base64_decode.py)
 // ---------------------------------------------------------------------------
 
-fn is_b64_data(c: char) -> bool {
+const fn is_b64_data(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '_' | '-')
 }
 
@@ -321,7 +327,7 @@ fn is_b64_separator(c: char) -> bool {
 /// engine's dependency set); the reference decodes them but only the gunzip
 /// branch of the base64 stage depends on it, and the decoded bytes then still
 /// have to pass the printable/UTF-8 gates.
-fn bounded_gunzip(_raw: &[u8]) -> Option<Vec<u8>> {
+const fn bounded_gunzip(_raw: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
@@ -353,7 +359,7 @@ fn py_is_printable(c: char) -> bool {
         0x00AD | 0x0600..=0x0605 | 0x061C | 0x06DD | 0x070F
         | 0x180E | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064
         | 0x2066..=0x206F | 0xFEFF | 0xFFF9..=0xFFFB
-        | 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x100000..=0x10FFFD
+        | 0xE000..=0xF8FF | 0xF0000..=0xFFFFD | 0x0010_0000..=0x0010_FFFD
     )
 }
 
@@ -392,7 +398,7 @@ fn b64_decode_strict(cleaned: &str) -> Option<Vec<u8>> {
             .collect::<Vec<u8>>()
             .try_into()
             .ok()?;
-        if v.iter().any(|x| *x == 255) || v[1] == 254 {
+        if v.contains(&255) || v[1] == 254 {
             return None;
         }
         out.push((v[0] << 2) | (v[1] >> 4));
@@ -408,7 +414,11 @@ fn b64_decode_strict(cleaned: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn decode_cleaned(cleaned: &str, min_printable_ratio: f64, gunzip_left: &mut u32) -> Option<String> {
+fn decode_cleaned(
+    cleaned: &str,
+    min_printable_ratio: f64,
+    gunzip_left: &mut u32,
+) -> Option<String> {
     let raw = b64_decode_strict(cleaned)?;
     let raw = if raw.len() >= 2 && raw[..2] == GZIP_MAGIC && *gunzip_left > 0 {
         *gunzip_left -= 1;
@@ -416,15 +426,14 @@ fn decode_cleaned(cleaned: &str, min_printable_ratio: f64, gunzip_left: &mut u32
     } else {
         raw
     };
-    let decoded = match std::str::from_utf8(&raw) {
-        Ok(s) => s.to_owned(),
-        Err(_) => {
-            let replaced = String::from_utf8_lossy(&raw).into_owned();
-            if replacement_char_ratio(&replaced) > MAX_REPLACEMENT_CHAR_RATIO {
-                return None;
-            }
-            replaced
+    let decoded = if let Ok(s) = std::str::from_utf8(&raw) {
+        s.to_owned()
+    } else {
+        let replaced = String::from_utf8_lossy(&raw).into_owned();
+        if replacement_char_ratio(&replaced) > MAX_REPLACEMENT_CHAR_RATIO {
+            return None;
         }
+        replaced
     };
     if printable_ratio(&decoded) >= min_printable_ratio {
         return Some(decoded);
@@ -503,7 +512,10 @@ fn base64_token_spans(content: &str) -> Vec<(usize, usize)> {
         }
         let run_end = j;
         let trailing_from = last_data_idx.map_or(i, |idx| idx + 1);
-        let trailing: Vec<char> = chars[trailing_from..run_end].iter().map(|(_, c)| *c).collect();
+        let trailing: Vec<char> = chars[trailing_from..run_end]
+            .iter()
+            .map(|(_, c)| *c)
+            .collect();
 
         // backtracking order: alternative 1, then 2, then 3
         let match_rel_end: Option<usize> = if data_count >= 12 {
@@ -616,14 +628,20 @@ fn decode_runs(token: &str, gunzip_attempts_left: &mut u32) -> String {
         let run_len = end_idx - idx;
         let mut absorb = 0usize;
         while absorb < 2
-            && chars.get(end_idx + absorb).is_some_and(|(_, rc)| *rc == '=')
+            && chars
+                .get(end_idx + absorb)
+                .is_some_and(|(_, rc)| *rc == '=')
         {
             absorb += 1;
         }
         if run_len >= 12 {
             let run: String = chars[idx..end_idx].iter().map(|(_, c)| c).collect();
             out.push_str(&token[last..start]);
-            match decode_token(&run, FALLBACK_PRINTABLE_RATIO_THRESHOLD, gunzip_attempts_left) {
+            match decode_token(
+                &run,
+                FALLBACK_PRINTABLE_RATIO_THRESHOLD,
+                gunzip_attempts_left,
+            ) {
                 Some(decoded) => out.push_str(&decoded),
                 None => out.push_str(&token[start..start + run_len + absorb]),
             }
@@ -658,7 +676,11 @@ fn reassemble_sub_floor_runs(token: &str, gunzip_attempts_left: &mut u32) -> Opt
     if fragments.chars().count() < 12 {
         return None;
     }
-    decode_token(&fragments, FALLBACK_PRINTABLE_RATIO_THRESHOLD, gunzip_attempts_left)
+    decode_token(
+        &fragments,
+        FALLBACK_PRINTABLE_RATIO_THRESHOLD,
+        gunzip_attempts_left,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -673,17 +695,16 @@ pub fn strip_sql_comments(content: &str) -> String {
     let mut out = String::with_capacity(content.len());
     let mut i = 0usize;
     while i < bytes.len() {
-        if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
-            match block_comment_span(content, i) {
-                Some((body_start, close_end)) => {
-                    out.push(' ');
-                    out.push_str(&content[body_start..close_end - 2]);
-                    out.push(' ');
-                    i = close_end;
-                    continue;
-                }
-                None => {}
-            }
+        if bytes[i] == b'/'
+            && i + 1 < bytes.len()
+            && bytes[i + 1] == b'*'
+            && let Some((body_start, close_end)) = block_comment_span(content, i)
+        {
+            out.push(' ');
+            out.push_str(&content[body_start..close_end - 2]);
+            out.push(' ');
+            i = close_end;
+            continue;
         }
         if bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
             out.push(' ');
@@ -712,8 +733,8 @@ fn block_comment_span(content: &str, start: usize) -> Option<(usize, usize)> {
     if bytes.get(start + 2) == Some(&b'!') {
         return None;
     }
-    let preceding_is_word = start > 0
-        && char_before(content, start).is_some_and(|(_, c)| py_is_word(c));
+    let preceding_is_word =
+        start > 0 && char_before(content, start).is_some_and(|(_, c)| py_is_word(c));
     let first_close = content[start + 2..]
         .find("*/")
         .map(|rel| (start + 2 + rel, start + 2 + rel + 2));
@@ -727,10 +748,7 @@ fn block_comment_span(content: &str, start: usize) -> Option<(usize, usize)> {
     while let Some(rel) = content[cursor..].find("*/") {
         let close = cursor + rel;
         let close_end = close + 2;
-        let after_is_word = content[close_end..]
-            .chars()
-            .next()
-            .is_some_and(py_is_word);
+        let after_is_word = content[close_end..].chars().next().is_some_and(py_is_word);
         if !after_is_word {
             return Some((start + 2, close_end));
         }
@@ -805,14 +823,24 @@ pub fn extract_attack_regions(content: &str, max_content_length: usize) -> Vec<(
     merged
 }
 
-fn consume_gap(content_chars: &[char], last_end: usize, start: usize, gap_budget: usize) -> (String, usize) {
+fn consume_gap(
+    content_chars: &[char],
+    last_end: usize,
+    start: usize,
+    gap_budget: usize,
+) -> (String, usize) {
     let gap_len = start - last_end;
     if gap_len <= gap_budget {
-        return (content_chars[last_end..start].iter().collect(), gap_budget - gap_len);
+        return (
+            content_chars[last_end..start].iter().collect(),
+            gap_budget - gap_len,
+        );
     }
     let chunk_len = gap_budget - 1;
     let piece = if chunk_len > 0 {
-        content_chars[last_end..last_end + chunk_len].iter().collect::<String>()
+        content_chars[last_end..last_end + chunk_len]
+            .iter()
+            .collect::<String>()
     } else {
         String::new()
     };
@@ -831,8 +859,7 @@ fn build_result_with_attack_regions_and_context(
 
     for (start, end) in attack_regions {
         if last_end < *start && gap_budget > 0 {
-            let (piece, remaining) =
-                consume_gap(content_chars, last_end, *start, gap_budget);
+            let (piece, remaining) = consume_gap(content_chars, last_end, *start, gap_budget);
             gap_budget = remaining;
             result_parts.push(piece);
         }
@@ -842,7 +869,11 @@ fn build_result_with_attack_regions_and_context(
 
     if last_end < content_chars.len() && gap_budget > 0 {
         let tail_len = usize::min(content_chars.len() - last_end, gap_budget);
-        result_parts.push(content_chars[last_end..last_end + tail_len].iter().collect());
+        result_parts.push(
+            content_chars[last_end..last_end + tail_len]
+                .iter()
+                .collect(),
+        );
     }
 
     result_parts.concat()
@@ -898,7 +929,11 @@ pub fn truncate_safely(
         return result;
     }
 
-    build_result_with_attack_regions_and_context(&content_chars, &attack_regions, max_full_scan_bytes)
+    build_result_with_attack_regions_and_context(
+        &content_chars,
+        &attack_regions,
+        max_full_scan_bytes,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -955,7 +990,12 @@ pub fn preprocess_with_decoded(
     let (decoded, exhausted) = decode_common_encodings_with_budget(&decoded);
     let processed = remove_null_bytes(&decoded);
     let processed = collapse_whitespace(&processed);
-    let processed = truncate_safely(&processed, max_full_scan_bytes, preserve_attacks, max_content_length);
+    let processed = truncate_safely(
+        &processed,
+        max_full_scan_bytes,
+        preserve_attacks,
+        max_content_length,
+    );
 
     (processed, decoded, exhausted)
 }
@@ -972,14 +1012,24 @@ pub fn preprocess_signal_preserving(
         return String::new();
     }
     let normalized = normalize_unicode(content);
-    truncate_safely(&normalized, max_full_scan_bytes, preserve_attacks, max_content_length)
+    truncate_safely(
+        &normalized,
+        max_full_scan_bytes,
+        preserve_attacks,
+        max_content_length,
+    )
 }
 
 /// `preprocess`: full processed view (legacy entry point).
 #[must_use]
 pub fn preprocess(content: &str, max_full_scan_bytes: usize, preserve_attacks: bool) -> String {
-    preprocess_with_decoded(content, max_full_scan_bytes, preserve_attacks, DEFAULT_MAX_CONTENT_LENGTH)
-        .0
+    preprocess_with_decoded(
+        content,
+        max_full_scan_bytes,
+        preserve_attacks,
+        DEFAULT_MAX_CONTENT_LENGTH,
+    )
+    .0
 }
 
 pub const DEFAULT_MAX_CONTENT_LENGTH: usize = 10_000;
@@ -993,12 +1043,6 @@ pub fn short_base64_additive_view(
     preserve_attacks: bool,
     max_content_length: usize,
 ) -> String {
-    if content.is_empty() {
-        return String::new();
-    }
-    let normalized = normalize_unicode(content);
-    let truncated = truncate_safely(&normalized, max_full_scan_bytes, preserve_attacks, max_content_length);
-
     static TOKEN_RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"[A-Za-z0-9+/]{4,}").expect("static regex"));
     static MARKERS: [char; 4] = ['$', '{', '}', '#'];
@@ -1006,13 +1050,22 @@ pub fn short_base64_additive_view(
     const MAX_CANDIDATES: usize = 20_000;
     const RATIO: f64 = 0.95;
 
+    if content.is_empty() {
+        return String::new();
+    }
+    let normalized = normalize_unicode(content);
+    let truncated = truncate_safely(
+        &normalized,
+        max_full_scan_bytes,
+        preserve_attacks,
+        max_content_length,
+    );
+
     let mut fragments: Vec<String> = Vec::new();
-    let mut attempts = 0usize;
-    for m in TOKEN_RE.find_iter(&truncated) {
+    for (attempts, m) in TOKEN_RE.find_iter(&truncated).enumerate() {
         if attempts >= MAX_CANDIDATES {
             break;
         }
-        attempts += 1;
         let token = m.as_str();
         if token.chars().count() > MAX_TOKEN_CHARS {
             continue;
@@ -1100,7 +1153,10 @@ mod tests {
             "550e8400-e29b-41d4-a716-446655440000"
         );
         // short token stays unchanged
-        assert_eq!(decode_base64_candidates("aGVsbG8=", &mut gunzip), "aGVsbG8=");
+        assert_eq!(
+            decode_base64_candidates("aGVsbG8=", &mut gunzip),
+            "aGVsbG8="
+        );
     }
 
     #[test]
@@ -1148,7 +1204,11 @@ mod tests {
 
     #[test]
     fn extract_attack_regions_padded() {
-        let content = format!("{}<script>alert(1)</script>{}", "a".repeat(150), "b".repeat(150));
+        let content = format!(
+            "{}<script>alert(1)</script>{}",
+            "a".repeat(150),
+            "b".repeat(150)
+        );
         let regions = extract_attack_regions(&content, 10_000);
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0], (50, 257));

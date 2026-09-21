@@ -83,10 +83,7 @@ pub struct TemplateRegion {
 pub fn template_regions(content: &str, opening: &str, closing: &str) -> Vec<TemplateRegion> {
     let mut regions = Vec::new();
     let mut cursor = 0usize;
-    loop {
-        let Some(start) = str_find_from(content, opening, cursor) else {
-            break;
-        };
+    while let Some(start) = str_find_from(content, opening, cursor) {
         let body_start = start + opening.len();
         let Some(barrier) = str_find_from(content, &closing[..1], body_start) else {
             break;
@@ -137,12 +134,7 @@ fn search_between(re: &PyRegex, haystack: &str, start: usize, end: usize) -> boo
 
 /// Arithmetic-branch hit with the `(?<!\d)` guard enforced structurally.
 #[must_use]
-fn arithmetic_in_window(
-    content: &str,
-    arithmetic: &PyRegex,
-    start: usize,
-    end: usize,
-) -> bool {
+fn arithmetic_in_window(content: &str, arithmetic: &PyRegex, start: usize, end: usize) -> bool {
     if start >= end || end > content.len() {
         return false;
     }
@@ -178,12 +170,11 @@ fn date_restart(
         .find_iter(&content[from..to])
         .last()
         .map(|m| m.start() + from);
-    match last_date {
-        None => Some(start),
+    last_date.map_or(Some(start), |pos| {
         // no later opening before the barrier: the reference finds nothing and
         // skips the region entirely
-        Some(pos) => str_find_from(content, opening, pos + 1).filter(|i| *i < barrier),
-    }
+        str_find_from(content, opening, pos + 1).filter(|i| *i < barrier)
+    })
 }
 
 /// `_template_keyword_matches`: an indicator keyword must appear strictly
@@ -201,8 +192,13 @@ pub fn template_keyword_matches(
     for region in template_regions(content, kind.opening, kind.closing) {
         let from = region.start + kind.opening.len() + 1;
         if search_between(&indicator, content, from, region.barrier)
-            && let Some(frame) =
-                template_frame(content, kind.opening, kind.closing, region.start, region.end)
+            && let Some(frame) = template_frame(
+                content,
+                kind.opening,
+                kind.closing,
+                region.start,
+                region.end,
+            )
         {
             matches.push(frame);
         }
@@ -232,19 +228,23 @@ pub fn template_expression_matches(
         }
         let mut start = region.start;
         if has_dates && let Some(dates) = &dates {
-            let Some(restarted) =
-                date_restart(content, kind.opening, start, region.barrier, dates)
+            let Some(restarted) = date_restart(content, kind.opening, start, region.barrier, dates)
             else {
                 continue;
             };
             start = restarted;
         }
-        let hit = search_between(&indicator, content, start + kind.opening.len(), region.barrier)
-            || arithmetic
-                .as_ref()
-                .is_some_and(|a| arithmetic_in_window(content, a, start + kind.opening.len(), region.barrier));
+        let hit = search_between(
+            &indicator,
+            content,
+            start + kind.opening.len(),
+            region.barrier,
+        ) || arithmetic.as_ref().is_some_and(|a| {
+            arithmetic_in_window(content, a, start + kind.opening.len(), region.barrier)
+        });
         if hit
-            && let Some(frame) = template_frame(content, kind.opening, kind.closing, start, region.end)
+            && let Some(frame) =
+                template_frame(content, kind.opening, kind.closing, start, region.end)
         {
             matches.push(frame);
             last_end = region.end;
@@ -272,7 +272,10 @@ mod tests {
         let stale = "{{ 2024-01-02 }}";
         assert!(template_expression_matches(stale, &KIND_CURLY_CALL, true).is_empty());
         let call = "{{ render() }}";
-        assert_eq!(template_expression_matches(call, &KIND_CURLY_CALL, true).len(), 1);
+        assert_eq!(
+            template_expression_matches(call, &KIND_CURLY_CALL, true).len(),
+            1
+        );
     }
 
     #[test]
@@ -291,10 +294,19 @@ mod tests {
     #[test]
     fn arithmetic_guard_blocks_digit_preceded_start() {
         // "3*4" is preceded by a space: the (?<!\d) guard passes
-        assert_eq!(template_expression_matches("{{12 3*4}}", &KIND_CURLY_CALL, true).len(), 1);
-        assert_eq!(template_expression_matches("{{7*6}}", &KIND_CURLY_CALL, true).len(), 1);
+        assert_eq!(
+            template_expression_matches("{{12 3*4}}", &KIND_CURLY_CALL, true).len(),
+            1
+        );
+        assert_eq!(
+            template_expression_matches("{{7*6}}", &KIND_CURLY_CALL, true).len(),
+            1
+        );
         // "a123*4" matches at the leading digit ("a" precedes it)
-        assert_eq!(template_expression_matches("{{a123*4}}", &KIND_CURLY_CALL, true).len(), 1);
+        assert_eq!(
+            template_expression_matches("{{a123*4}}", &KIND_CURLY_CALL, true).len(),
+            1
+        );
         // "12 3" cannot start mid-number: the only candidate start "3*" is
         // fine, but "2 3*4"-style digit-preceded starts never occur here
         assert_eq!(

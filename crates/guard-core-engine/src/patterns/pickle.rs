@@ -1,7 +1,7 @@
 //! Pickle opcode-stream validation ported from
 //! `guard_core/handlers/_suspatterns_pickle.py` (spec 4.0.2).
 //!
-//! The reference walks a bounded 4096-byte window through the CPython pickle
+//! The reference walks a bounded 4096-byte window through the `CPython` pickle
 //! opcode dispatch (with class resolution, extension registry and persistent
 //! loading blocked). The walk answers exactly two questions: does the prefix
 //! before a candidate look like a valid opcode stream, and does the suffix
@@ -76,9 +76,14 @@ fn pop_mark(state: &mut WalkState) -> Result<(), WalkError> {
 }
 
 fn is_digits(text: &[u8]) -> bool {
-    !text.is_empty() && text.iter().all(|b| b.is_ascii_digit())
+    !text.is_empty() && text.iter().all(u8::is_ascii_digit)
 }
 
+#[allow(
+    clippy::too_many_lines,
+    clippy::match_same_arms,
+    reason = "one arm per pickle opcode in reference-table order: arms with identical bodies are distinct opcodes that share behavior, and splitting or merging them would obscure the 1:1 opcode mapping"
+)]
 fn dispatch_opcode(state: &mut WalkState, key: u8) -> Result<(), WalkError> {
     match key {
         0x28 => {
@@ -88,7 +93,10 @@ fn dispatch_opcode(state: &mut WalkState, key: u8) -> Result<(), WalkError> {
         }
         0x30 => {
             // '0' POP
-            state.stack.pop().map_or(Err(WalkError::Blocked), |_| Ok(()))
+            state
+                .stack
+                .pop()
+                .map_or(Err(WalkError::Blocked), |_| Ok(()))
         }
         0x31 => pop_mark(state), // '1' POP_MARK
         0x32 => {
@@ -112,13 +120,22 @@ fn dispatch_opcode(state: &mut WalkState, key: u8) -> Result<(), WalkError> {
         }
         0x61 => {
             // 'a' APPEND
-            state.stack.pop().map_or(Err(WalkError::Blocked), |_| Ok(()))
+            state
+                .stack
+                .pop()
+                .map_or(Err(WalkError::Blocked), |_| Ok(()))
         }
         0x65 => pop_mark(state), // 'e' APPENDS
         0x73 => {
             // 's' SETITEM
-            state.stack.pop().map_or(Err(WalkError::Blocked), |_| Ok(()))?;
-            state.stack.pop().map_or(Err(WalkError::Blocked), |_| Ok(()))
+            state
+                .stack
+                .pop()
+                .map_or(Err(WalkError::Blocked), |_| Ok(()))?;
+            state
+                .stack
+                .pop()
+                .map_or(Err(WalkError::Blocked), |_| Ok(()))
         }
         0x75 => pop_mark(state), // 'u' SETITEMS
         0x4e | 0x89 | 0x88 => {
@@ -360,13 +377,13 @@ fn walk_opcodes(
         }
     }
     if is_complete {
-        Some(if stop_at_reduce_or_build { false } else { true })
+        Some(!stop_at_reduce_or_build)
     } else {
         Some(true)
     }
 }
 
-fn fresh_state<'a>(window: &'a [u8], seed_stack: bool) -> WalkState<'a> {
+fn fresh_state(window: &[u8], seed_stack: bool) -> WalkState<'_> {
     WalkState {
         window,
         pos: 0,

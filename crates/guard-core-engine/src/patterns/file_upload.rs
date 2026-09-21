@@ -31,13 +31,14 @@ pub const BENIGN_TERMINAL: &[&str] = &[
     "jpg", "mkv", "mov", "mp3", "mp4", "odt", "pdf", "png", "ppt", "svg", "tif", "wav", "xls",
 ];
 
-fn is_whitespace(c: char) -> bool {
+const fn is_whitespace(c: char) -> bool {
     c.is_whitespace()
 }
 
-/// `\.(?:php\d*|<alternation>)(?![A-Za-z0-9])` anchored at `pos`, returning
-/// the marker end. Branches are tried in reference order with the `php\d*`
-/// digit backtracking; the lookahead is a suffix check per branch.
+/// Anchored-`pos` matcher for `\.(?:php\d*|<alternation>)(?![A-Za-z0-9])`.
+///
+/// Returns the marker end. Branches are tried in reference order with the
+/// `php\d*` digit backtracking; the lookahead is a suffix check per branch.
 #[must_use]
 pub fn dangerous_marker_at(body: &str, pos: usize, extensions: &[&str]) -> Option<usize> {
     if char_at(body, pos).map(|(_, c)| c) != Some('.') {
@@ -90,9 +91,7 @@ fn terminal_extension(body: &str, extensions: &[&str], include_php_digits: bool)
     {
         return true;
     }
-    extensions
-        .iter()
-        .any(|ext| tail.eq_ignore_ascii_case(ext))
+    extensions.iter().any(|ext| tail.eq_ignore_ascii_case(ext))
 }
 
 fn benign_terminal(body: &str) -> bool {
@@ -122,8 +121,8 @@ fn is_double_extension(body: &str) -> bool {
         if marker_end > final_dot {
             continue;
         }
-        let suffix_ok = char_at(body, marker_end)
-            .is_none_or(|(_, c)| !matches!(c, ' ' | '"' | '\''));
+        let suffix_ok =
+            char_at(body, marker_end).is_none_or(|(_, c)| !matches!(c, ' ' | '"' | '\''));
         if marker_end == final_dot || (marker_end < final_dot && suffix_ok) {
             return true;
         }
@@ -320,24 +319,28 @@ mod tests {
 
     #[test]
     fn plain_image_is_benign() {
-        assert!(file_upload_scan_matches(
-            "filename=\"photo.jpg\"",
-            DOUBLE,
-            DANGEROUS,
-            DOUBLE,
-            TRUNC,
-            DECODED_TRUNC
-        )
-        .is_empty());
-        assert!(file_upload_scan_matches(
-            "filename=\"doc.pdf\"",
-            DANGEROUS,
-            DANGEROUS,
-            DOUBLE,
-            TRUNC,
-            DECODED_TRUNC
-        )
-        .is_empty());
+        assert!(
+            file_upload_scan_matches(
+                "filename=\"photo.jpg\"",
+                DOUBLE,
+                DANGEROUS,
+                DOUBLE,
+                TRUNC,
+                DECODED_TRUNC
+            )
+            .is_empty()
+        );
+        assert!(
+            file_upload_scan_matches(
+                "filename=\"doc.pdf\"",
+                DANGEROUS,
+                DANGEROUS,
+                DOUBLE,
+                TRUNC,
+                DECODED_TRUNC
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -379,14 +382,16 @@ mod tests {
     #[test]
     fn filename_needs_boundary() {
         // "myfilename" has no boundary before `filename` at offset 2
-        assert!(file_upload_scan_matches(
-            "myfilename=\"shell.php\"",
-            DANGEROUS,
-            DANGEROUS,
-            DOUBLE,
-            TRUNC,
-            DECODED_TRUNC
-        )
-        .is_empty());
+        assert!(
+            file_upload_scan_matches(
+                "myfilename=\"shell.php\"",
+                DANGEROUS,
+                DANGEROUS,
+                DOUBLE,
+                TRUNC,
+                DECODED_TRUNC
+            )
+            .is_empty()
+        );
     }
 }

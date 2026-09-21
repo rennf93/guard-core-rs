@@ -88,11 +88,7 @@ pub fn bounded_finditer_guarded(
             return matches;
         };
         matches.push(m);
-        search_from = if m.end > m.start {
-            m.end
-        } else {
-            m.start + 1
-        };
+        search_from = if m.end > m.start { m.end } else { m.start + 1 };
     }
 }
 
@@ -102,9 +98,9 @@ mod tests {
 
     #[test]
     fn finds_matches_inside_window() {
-        let compiled = PyRegex::compile(r#"<script[^>]*>[^<]*<\/script\s*>"#, false).unwrap();
+        let compiled = PyRegex::compile(r"<script[^>]*>[^<]*<\/script\s*>", false).unwrap();
         let prefix = PyRegex::compile("<script", false).unwrap();
-        let terminator = PyRegex::compile(r#"<\/script\s*>"#, false).unwrap();
+        let terminator = PyRegex::compile(r"<\/script\s*>", false).unwrap();
         let text = "junk <script>a</script> tail <script>b</script>";
         let ms = bounded_finditer(text, &compiled, &prefix, &terminator);
         assert_eq!(ms.len(), 2);
@@ -114,9 +110,9 @@ mod tests {
 
     #[test]
     fn no_terminator_no_match() {
-        let compiled = PyRegex::compile(r#"<script[^>]*>[^<]*<\/script\s*>"#, false).unwrap();
+        let compiled = PyRegex::compile(r"<script[^>]*>[^<]*<\/script\s*>", false).unwrap();
         let prefix = PyRegex::compile("<script", false).unwrap();
-        let terminator = PyRegex::compile(r#"<\/script\s*>"#, false).unwrap();
+        let terminator = PyRegex::compile(r"<\/script\s*>", false).unwrap();
         assert!(bounded_finditer("<script>a", &compiled, &prefix, &terminator).is_empty());
     }
 }

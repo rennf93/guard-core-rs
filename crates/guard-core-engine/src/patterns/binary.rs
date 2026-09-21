@@ -70,15 +70,7 @@ fn is_text_allowlist(c: char) -> bool {
     }
     if matches!(
         cp,
-        0x00A3 | 0x00A5
-            | 0x00AA
-            | 0x00B0
-            | 0x00B1
-            | 0x00B2
-            | 0x00B3
-            | 0x00B5
-            | 0x00B9
-            | 0x00BA
+        0x00A3 | 0x00A5 | 0x00AA | 0x00B0 | 0x00B1 | 0x00B2 | 0x00B3 | 0x00B5 | 0x00B9 | 0x00BA
     ) {
         return true;
     }
