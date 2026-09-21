@@ -12,8 +12,6 @@
 #   - failing case listed here     -> xfail (tolerated, reported four-way)
 spec_version = '4.0.2'
 cases = [
-    { case = 'semantic::sem_regex_plus_semantic_below_threshold', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'semantic::sem_structural_dense', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'sqli::sqli_benchmark', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'sqli::sqli_comment_bypass', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'sqli::sqli_double_query', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
