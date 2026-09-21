@@ -11,7 +11,7 @@ fuzz_target!(|data: &str| {
     let _ = guard_core_engine::preprocessor::collapse_whitespace(data);
     let _ = guard_core_engine::preprocessor::extract_attack_regions(data, 10_000);
 
-    let _ = guard_core_engine::preprocessor::truncate_safely(data, 50, true);
-    let _ = guard_core_engine::preprocessor::truncate_safely(data, 50, false);
-    let _ = guard_core_engine::preprocessor::truncate_safely(data, 0, true);
+    let _ = guard_core_engine::preprocessor::truncate_safely(data, 50, true, 10_000);
+    let _ = guard_core_engine::preprocessor::truncate_safely(data, 50, false, 10_000);
+    let _ = guard_core_engine::preprocessor::truncate_safely(data, 0, true, 10_000);
 });
