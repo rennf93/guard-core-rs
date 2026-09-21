@@ -12,10 +12,6 @@
 #   - failing case listed here     -> xfail (tolerated, reported four-way)
 spec_version = '4.0.2'
 cases = [
-    { case = 'boundaries::boundary_attack_beyond_scan_limit', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'boundaries::boundary_attack_then_benign', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'boundaries::boundary_padded_attack', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'boundaries::boundary_split_signature', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'cmd_injection::cmdi_backtick', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'cmd_injection::cmdi_bash_dash_c', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'cmd_injection::cmdi_curl_sh', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
