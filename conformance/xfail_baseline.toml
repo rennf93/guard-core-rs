@@ -12,7 +12,6 @@
 #   - failing case listed here     -> xfail (tolerated, reported four-way)
 spec_version = '4.0.2'
 cases = [
-    { case = 'benign::benign_markdown', reason = 'preprocessor divergence: engine strips # and -- markers to end of line; the 4.x reference replaces the marker with a space' },
     { case = 'boundaries::boundary_attack_beyond_scan_limit', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'boundaries::boundary_attack_then_benign', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'boundaries::boundary_padded_attack', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
@@ -82,7 +81,6 @@ cases = [
     { case = 'misc_injection::template_asp_eval', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'misc_injection::template_dollar_brace', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'misc_injection::template_jinja_expr', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'misc_injection::template_velocity_set', reason = 'preprocessor divergence: engine strips # and -- markers to end of line; the 4.x reference replaces the marker with a space' },
     { case = 'misc_injection::xml_xxe_file', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'misc_injection::xml_xxe_remote', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'path_traversal::trav_absolute_etc', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
