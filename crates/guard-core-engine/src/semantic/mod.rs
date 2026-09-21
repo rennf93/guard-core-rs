@@ -62,7 +62,7 @@ static INJECTION_KW_RE: LazyLock<Vec<Regex>> = LazyLock::new(|| {
 });
 
 /// A structural pattern match with surrounding context.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SuspiciousPattern {
     /// Pattern category name from [`AttackStructures`] (one of 5 fixed values).
     pub pattern_type: &'static str,
@@ -79,7 +79,7 @@ pub struct SuspiciousPattern {
 }
 
 /// Aggregate output of [`analyze`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AnalysisResult {
     /// Per-category scores (xss, sql, command, path, template) in `[0.0, 1.0]`.
     pub attack_probabilities: HashMap<&'static str, f64>,

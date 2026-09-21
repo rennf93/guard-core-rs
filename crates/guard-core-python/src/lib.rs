@@ -103,7 +103,7 @@ fn analyze(py: Python<'_>, content: &str) -> PyResult<Py<PyDict>> {
 
     for p in &result.suspicious_patterns {
         let d = PyDict::new(py);
-        d.set_item("type", &p.pattern_type)?;
+        d.set_item("type", p.pattern_type)?;
         d.set_item("pattern", &p.matched)?;
         d.set_item("position", p.position)?;
         d.set_item("context", &p.context)?;
@@ -215,6 +215,7 @@ fn validate_pattern_safety(pattern: &str) -> (bool, &'static str) {
 ///     Threat scores between 0.0 and 1.0 for each input.
 #[pyfunction]
 #[pyo3(signature = (contents, max_length=10_000))]
+#[allow(clippy::needless_pass_by_value)] // PyO3 boundary: owned Vec required by the extractor; body only reads
 fn batch_threat_scores(py: Python<'_>, contents: Vec<String>, max_length: usize) -> Vec<f64> {
     // release GIL during batch,
     // pure Rust work, no Python state touched
