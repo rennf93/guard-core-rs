@@ -383,7 +383,10 @@ fn b64_decode_strict(cleaned: &str) -> Option<Vec<u8>> {
     }
     let bytes = padded.as_bytes();
     let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    for group in bytes.chunks_exact(4) {
+    // the re-padding above guarantees a multiple of 4, so the remainder is empty
+    let (groups, rest) = bytes.as_chunks::<4>();
+    debug_assert!(rest.is_empty());
+    for group in groups {
         let v: [u8; 4] = group
             .iter()
             .map(|b| match b {
@@ -517,27 +520,31 @@ fn base64_token_spans(content: &str) -> Vec<(usize, usize)> {
             .map(|(_, c)| *c)
             .collect();
 
-        // backtracking order: alternative 1, then 2, then 3
-        let match_rel_end: Option<usize> = if data_count >= 12 {
-            Some(run_end - start)
+        // backtracking order: alternative 1, then 2, then 3. Every end is a
+        // CHAR index into `chars`; `alt_eq_end` returns an index into the
+        // trailing separator slice (the chars after the last data char), so
+        // the match end is `trailing_from + rel` there.
+        let match_end_char: Option<usize> = if data_count >= 12 {
+            // the units absorb every separator, so the match is the full run
+            Some(run_end)
         } else if data_count >= 11 {
-            alt_eq_end(&trailing, 1).or_else(|| alt_eq_end(&trailing, 2))
+            alt_eq_end(&trailing, 1)
+                .or_else(|| alt_eq_end(&trailing, 2))
+                .map(|rel| trailing_from + rel)
         } else if data_count == 10 {
-            alt_eq_end(&trailing, 2)
+            alt_eq_end(&trailing, 2).map(|rel| trailing_from + rel)
         } else {
             None
         };
-        let Some(rel_end) = match_rel_end else {
+        let Some(end_char) = match_end_char else {
             i += 1;
             continue;
         };
-        let end = start + rel_end;
+        let end = chars.get(end_char).map_or(content.len(), |(idx, _)| *idx);
         if end > start {
             spans.push((start, end));
             // resume after the match, like re.sub
-            i = chars
-                .binary_search_by(|(idx, _)| idx.cmp(&end))
-                .unwrap_or_else(|insert| insert);
+            i = end_char;
             continue;
         }
         i += 1;
@@ -1212,5 +1219,13 @@ mod tests {
         let regions = extract_attack_regions(&content, 10_000);
         assert_eq!(regions.len(), 1);
         assert_eq!(regions[0], (50, 257));
+    }
+    #[test]
+    fn b64_span_after_multibyte_no_underflow() {
+        // A 12+ char base64 run preceded by multibyte content: the run's byte
+        // offset exceeds its char index, so run_end(char) - start(byte) would
+        // underflow. Regression for the fuzz-found panic (unit mismatch).
+        let content = "h\u{e9}llo ++++++++++++++++++++++++++++++++++++";
+        let _ = decode_common_encodings(content);
     }
 }
