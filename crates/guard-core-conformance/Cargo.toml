@@ -1,5 +1,5 @@
 [package]
-name         = "guard-core-benchmark"
+name         = "guard-core-conformance"
 version      = "0.0.1"
 publish      = false
 edition      = { workspace = true }
@@ -7,29 +7,14 @@ license      = { workspace = true }
 rust-version = { workspace = true }
 
 [lib]
-bench   = false
-doctest = false
-test    = false
+bench = false
 
 [dependencies]
-criterion         = { workspace = true }
 guard-core-engine = { workspace = true }
-
-[[bench]]
-name    = "compiler"
-harness = false
-
-[[bench]]
-name    = "detection_engine"
-harness = false
-
-[[bench]]
-name    = "preprocessor"
-harness = false
-
-[[bench]]
-name    = "semantic"
-harness = false
+regex             = { workspace = true }
+serde             = { workspace = true }
+serde_json        = { workspace = true }
+toml              = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -37,6 +22,7 @@ unsafe_code = "forbid"
 [lints.clippy]
 all                      = { level = "deny", priority = -1 }
 cast_possible_truncation = "allow"
+cast_precision_loss      = "allow"
 missing_errors_doc       = "allow"
 missing_panics_doc       = "allow"
 module_name_repetitions  = "allow"

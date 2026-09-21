@@ -7,6 +7,8 @@ on:
       - "**.rs"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "conformance/**"
+      - "deny.toml"
       - ".github/workflows/ci.yml"
   pull_request:
     branches: [master]
@@ -14,7 +16,11 @@ on:
       - "**.rs"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "conformance/**"
+      - "deny.toml"
       - ".github/workflows/ci.yml"
+  schedule:
+    - cron: "0 6 * * 1"
 
 permissions: {}
 
@@ -55,3 +61,106 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --exclude guard-core-python
+
+  conformance:
+    name: Conformance gate (spec 4.0.2)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          rustflags: ""
+          cache-shared-key: ci-ubuntu
+
+      - name: Ledger integrity
+        run: cargo test -p guard-core-conformance --test ledger_integrity -- --nocapture
+
+      - name: Conformance gate
+        run: cargo test -p guard-core-conformance --test conformance -- --nocapture
+
+  msrv:
+    name: MSRV (1.92)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          toolchain: 1.92.0
+          rustflags: ""
+          cache-shared-key: ci-msrv
+
+      - name: Check
+        run: cargo check --workspace --exclude guard-core-python --all-targets
+
+      - name: Test
+        run: cargo test --workspace --exclude guard-core-python
+
+  security:
+    name: Security audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          rustflags: ""
+          cache-shared-key: ci-ubuntu
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: cargo audit
+        run: cargo audit
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: cargo deny
+        run: cargo deny check
+
+  docs:
+    name: Docs build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    env:
+      RUSTDOCFLAGS: -D warnings
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          rustflags: ""
+          cache-shared-key: ci-ubuntu
+
+      - name: cargo doc
+        run: cargo doc --workspace --exclude guard-core-python --no-deps --all-features

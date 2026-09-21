@@ -36,6 +36,7 @@ All notable changes to this project.
 - `analyze()` deduplicates shared work — tokens, entropy, encoding layers computed once
 - `validate_pattern_safety` returns the specific dangerous construct matched, not a generic message
 - `SuspiciousPattern.pattern_type` is `&'static str` (was `String`), no per-match allocation
+- `SuspiciousPattern.position` is now a Unicode code-point index into the analyzed content, matching the Python reference (`semantic.py` emits `match.start()` on the processed `str`). The `regex` crate still matches on bytes internally; byte offsets are converted at the result boundary with an incremental per-regex cursor. Binding-visible: the PyO3 `analyze` function forwards the field, so `suspicious_patterns[*].position` is a code-point index for Python callers too
 - `PatternCache::get_or_compile` uses single-lookup `try_get_or_insert_mut` (lru 0.17+)
 - All GitHub Actions workflows: `permissions: {}` top-level, `persist-credentials: false` on checkout, all `actions/*` refs SHA-pinned; `dtolnay/rust-toolchain` replaced with `actions-rust-lang/setup-rust-toolchain` (pinnable)
 - `greetings.yml`: `pull_request_target` -> `pull_request` (removes write-token exposure on untrusted forks)
@@ -50,6 +51,7 @@ All notable changes to this project.
 ### Known differences from Python
 
 - **Entropy over bytes, not code points.** Python `Counter(content)` counts code points; Rust uses a 256-byte array. Multi-byte UTF-8 reaches the `entropy > 4.5` threshold more readily in Rust. Acceptable — entropy is one of four obfuscation heuristics, not a hard gate.
+- **Suspicious-pattern context windows slice bytes, not code points.** The Python reference expands the context window ±20 code points around a match; Rust expands ±20 bytes rounded to char boundaries. Identical for ASCII content; positions themselves are code-point indices in both.
 - **`ast.parse` injection signal not ported.** Python's `_check_ast_parsing_risk` adds 0.2-0.3 to code injection scores. Not worth a Python parser dependency for a weak signal.
 - **Async event plumbing not ported.** `agent_handler`, `correlation_id`, `preprocess_batch` are handler-layer concerns, out of scope.
 - **`<?php` pattern corrected.** Python's `r"<?php"` makes `<` optional. Rust uses `r"<\?php"` (correct intent). Filed upstream as guard-core#6.

@@ -76,7 +76,9 @@ fn decode_common_encodings(content: &str) -> String {
 /// dict
 ///     Analysis results with keys: attack_probabilities, entropy,
 ///     encoding_layers, is_obfuscated, suspicious_patterns,
-///     code_injection_risk, token_count.
+///     code_injection_risk, token_count. Each suspicious_patterns entry
+///     carries `position` as a Unicode code-point index into `content`
+///     (Python str index space), matching the guard-core reference.
 #[pyfunction]
 fn analyze(py: Python<'_>, content: &str) -> PyResult<Py<PyDict>> {
     let keywords = semantic::AttackKeywords::default();

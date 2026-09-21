@@ -67,8 +67,14 @@ pub struct SuspiciousPattern {
     /// Pattern category name from [`AttackStructures`] (one of 5 fixed values).
     pub pattern_type: &'static str,
     pub matched: String,
+    /// Match start as a Unicode code-point index into the analyzed content,
+    /// mirroring the Python reference (`semantic.py` emits `match.start()` on
+    /// the processed `str`, so its positions are code-point indices). The
+    /// `regex` crate matches on bytes internally; byte offsets are converted
+    /// here at the result boundary.
     pub position: usize,
-    /// Substring surrounding the match (up to 20 chars each side).
+    /// Substring surrounding the match (up to 20 bytes each side, rounded to
+    /// char boundaries; the Python reference window is ±20 code points).
     pub context: String,
 }
 
@@ -192,14 +198,22 @@ pub fn extract_suspicious_patterns(
         .named()
         .iter()
         .flat_map(|&(name, ref re)| {
+            // find_iter yields non-overlapping matches in ascending byte
+            // order, so a running cursor converts byte offsets to code-point
+            // indices in O(n) per regex instead of rescanning from position 0
+            let mut byte_cursor = 0usize;
+            let mut char_cursor = 0usize;
             re.find_iter(content).map(move |m| {
+                char_cursor += content[byte_cursor..m.start()].chars().count();
+                byte_cursor = m.start();
+
                 let ctx_start = content.floor_char_boundary(m.start().saturating_sub(20));
                 let ctx_end = content.ceil_char_boundary(m.end() + 20);
 
                 SuspiciousPattern {
                     pattern_type: name,
                     matched: m.as_str().to_owned(),
-                    position: m.start(),
+                    position: char_cursor,
                     context: content[ctx_start..ctx_end].to_owned(),
                 }
             })
@@ -574,5 +588,73 @@ mod tests {
         assert!(!patterns.is_empty());
         let result = analyze(&content, &kw(), &st());
         assert!(result.token_count > 0);
+    }
+
+    // positions are Unicode code-point indices (Python str index space, the
+    // reference semantic.py emits match.start() on the processed str), not
+    // byte offsets. Expected values pinned against the Python reference.
+    #[test]
+    fn suspicious_pattern_positions_are_codepoint_indices() {
+        // CJK padding: 10 code points = 30 bytes, so byte offsets would be 30/54
+        let content = "测试测试测试测试测试<script>alert(1)</script>";
+        let tag_like: Vec<_> = extract_suspicious_patterns(content, &st())
+            .into_iter()
+            .filter(|p| p.pattern_type == "tag_like")
+            .collect();
+        assert_eq!(tag_like[0].matched, "<script>");
+        assert_eq!(tag_like[0].position, 10);
+        assert_eq!(tag_like[1].matched, "</script>");
+        assert_eq!(tag_like[1].position, 26);
+
+        // emoji padding: 8 code points = 32 bytes
+        let content = format!("{}<script>alert(1)</script>", "\u{1F600}".repeat(8));
+        let tag_like: Vec<_> = extract_suspicious_patterns(&content, &st())
+            .into_iter()
+            .filter(|p| p.pattern_type == "tag_like")
+            .collect();
+        assert_eq!(tag_like[0].position, 8);
+        assert_eq!(tag_like[1].position, 24);
+
+        // multibyte gaps between matches exercise the incremental
+        // byte -> code-point cursor across several matches
+        let content = "您好<script>a</script>世界<b>ok</b>";
+        let tag_positions: Vec<_> = extract_suspicious_patterns(content, &st())
+            .into_iter()
+            .filter(|p| p.pattern_type == "tag_like")
+            .map(|p| (p.matched, p.position))
+            .collect();
+        assert_eq!(
+            tag_positions,
+            [
+                ("<script>".to_owned(), 2),
+                ("</script>".to_owned(), 11),
+                ("<b>".to_owned(), 22),
+                ("</b>".to_owned(), 27),
+            ]
+        );
+
+        // match before multibyte content: trailing chars must not shift it
+        let content = "alert(1) 测试 мир \u{1F600}";
+        let fc = extract_suspicious_patterns(content, &st())
+            .into_iter()
+            .find(|p| p.pattern_type == "function_call")
+            .expect("function_call match");
+        assert_eq!(fc.matched, "alert(1)");
+        assert_eq!(fc.position, 0);
+
+        // two-byte accented chars before the match
+        let content = "café naïve <img src=x onerror=alert(1)>";
+        let patterns = extract_suspicious_patterns(content, &st());
+        let tag = patterns
+            .iter()
+            .find(|p| p.pattern_type == "tag_like")
+            .expect("tag_like match");
+        assert_eq!(tag.position, 11);
+        let fc = patterns
+            .iter()
+            .find(|p| p.pattern_type == "function_call")
+            .expect("function_call match");
+        assert_eq!(fc.matched, "alert(1)");
+        assert_eq!(fc.position, 30);
     }
 }
