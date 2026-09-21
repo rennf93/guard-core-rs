@@ -12,15 +12,6 @@
 #   - failing case listed here     -> xfail (tolerated, reported four-way)
 spec_version = '4.0.2'
 cases = [
-    { case = 'context_matrix::ctx_sqli_narrow_body', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'context_matrix::ctx_sqli_narrow_header', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'context_matrix::ctx_trav_header', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'context_matrix::ctx_trav_query_param', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'context_matrix::ctx_trav_request_body', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'context_matrix::ctx_trav_unknown', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'context_matrix::ctx_trav_url_path', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'context_matrix::ctx_xss_header', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
-    { case = 'context_matrix::ctx_xss_url_path', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'encoding::enc_base64_cmd_payload', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'encoding::enc_base64_xss_payload', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
     { case = 'encoding::enc_double_url_sqli', reason = 'rust engine lacks the 4.x pattern-table scan stage: regex threats are not produced' },
