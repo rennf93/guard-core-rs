@@ -1,0 +1,95 @@
+name: Release Gate
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions: {}
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test at tag (${{ matrix.rust }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ['stable', '1.92.0']
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          toolchain: ${{ matrix.rust }}
+          rustflags: ""
+
+      - name: cargo fmt check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --exclude guard-core-python -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --exclude guard-core-python
+
+  conformance:
+    name: Conformance gate at tag (spec 4.0.2)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          rustflags: ""
+
+      - name: Ledger integrity
+        run: cargo test -p guard-core-conformance --test ledger_integrity -- --nocapture
+
+      - name: Conformance gate
+        run: cargo test -p guard-core-conformance --test conformance -- --nocapture
+
+  tag-consistency:
+    name: Tag matches crate version
+    needs: [test, conformance]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Publishing to crates.io is manual and owner-gated; this workflow
+      # never publishes. The consumable check is this tag/version
+      # consistency gate: the tag must equal the guard-core-rs facade crate
+      # version, which the workspace pins for the internal engine dependency
+      # too. A `cargo package`/`cargo publish --dry-run` pass is the
+      # maintainer's responsibility at publish time.
+      - name: Verify tag equals the crate version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "guard-core-rs") | .version')
+          if [ "$tag" != "$version" ]; then
+            echo "tag v$tag does not match crate version $version"
+            exit 1
+          fi
+          echo "ok: tag v$tag matches crate version $version"
+          echo "Publishing is manual and owner-gated: run 'cargo publish -p guard-core-engine' then 'cargo publish -p guard-core-rs' from a clean checkout of this tag as the maintainer."

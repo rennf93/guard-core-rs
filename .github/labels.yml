@@ -1,42 +1,18 @@
-- name: "area: protocols"
+- name: "area: engine"
   color: "0E8A16"
-  description: "Touches src/protocols/"
+  description: "Touches crates/guard-core-engine/ (compiler, preprocessor, semantic, detect, patterns)"
 
-- name: "area: checks"
+- name: "area: facade"
   color: "0E8A16"
-  description: "Touches src/core/checks/"
+  description: "Touches crates/guard-core-rs/ (published facade crate)"
 
-- name: "area: detection-engine"
+- name: "area: python-bindings"
   color: "0E8A16"
-  description: "Touches src/detection_engine/"
+  description: "Touches crates/guard-core-python/ (PyO3 detection bindings)"
 
-- name: "area: handlers"
+- name: "area: conformance"
   color: "0E8A16"
-  description: "Touches src/handlers/"
-
-- name: "area: decorators"
-  color: "0E8A16"
-  description: "Touches src/decorators/"
-
-- name: "area: core-subsystems"
-  color: "0E8A16"
-  description: "Touches src/core/{responses,routing,validation,bypass,behavioral,events,initialization}/"
-
-- name: "area: models"
-  color: "0E8A16"
-  description: "Touches src/models.rs"
-
-- name: "area: errors"
-  color: "0E8A16"
-  description: "Touches src/error.rs"
-
-- name: "area: utils"
-  color: "0E8A16"
-  description: "Touches src/utils.rs"
-
-- name: "area: scripts"
-  color: "0E8A16"
-  description: "Touches src/scripts/"
+  description: "Touches the spec 4.0.2 corpus, ledger, or xfail baseline"
 
 - name: tests
   color: "FBCA04"
@@ -44,7 +20,7 @@
 
 - name: benchmarks
   color: "F9D0C4"
-  description: "criterion benchmarks"
+  description: "Criterion benches, fuzz targets, performance comparisons"
 
 - name: examples
   color: "C5DEF5"
@@ -52,7 +28,7 @@
 
 - name: documentation
   color: "0075CA"
-  description: "Docs, README, CHANGELOG, governance files"
+  description: "Docs site, README, CHANGELOG, license files"
 
 - name: ci
   color: "5319E7"
@@ -60,7 +36,7 @@
 
 - name: build
   color: "BFD4F2"
-  description: "Makefile / Docker / linters"
+  description: "Workspace manifests, toolchain config, linters, Docker"
 
 - name: dependencies
   color: "0366D6"
@@ -117,3 +93,7 @@
 - name: "breaking-change"
   color: "B60205"
   description: "PR contains a backward-incompatible change"
+
+- name: "no-issue"
+  color: "EEEEEE"
+  description: "Chore or dependency PR that does not need an issue"

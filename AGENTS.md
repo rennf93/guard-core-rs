@@ -96,6 +96,16 @@ There is no checked-in Python packaging config for `guard-core-python` yet (PyO3
 ## Development Commands
 
 There is no Makefile or justfile. `.github/workflows/ci.yml` and `.pre-commit-config.yaml` are the source of truth; every command below is copied from them.
+```bash
+# Documentation site (docs.yml builds strict and deploys on master)
+pip install mkdocs-material && mkdocs build --strict
+
+# Example apps (workspace members; see examples/*/README.md for the full smoke assertions)
+cargo build -p guard-core-rs-simple-app -p guard-core-rs-advanced-app
+docker compose -f examples/simple_app/docker-compose.yml up --build -d --wait
+docker compose -f examples/advanced_app/docker-compose.yml up --build -d --wait
+```
+
 
 ```bash
 # Format check (CI gate)
@@ -137,24 +147,34 @@ cargo +nightly fuzz run fuzz_preprocess -- -max_total_time=60
 
 ```
 guard-core-rs/
-├── Cargo.toml                  # workspace: members = ["crates/*"], exclude = ["fuzz"], resolver = "3"
+├── Cargo.toml                  # workspace: members = ["crates/*", "examples/*"], exclude = ["fuzz"], resolver = "3"
 ├── Cargo.lock
 ├── crates/
 │   ├── guard-core-rs/          # facade crate (published name): re-exports engine modules
-│   ├── guard-core-engine/      # detection engine: compiler.rs, preprocessor.rs, semantic/
+│   ├── guard-core-engine/      # detection engine: compiler.rs, detect.rs, preprocessor.rs, patterns/, semantic/
 │   ├── guard-core-python/      # PyO3 bindings (cdylib, Python module name: guard_core_rs)
 │   ├── guard-core-benchmark/   # criterion benches (4 suites, harness = false)
 │   └── guard-core-conformance/ # conformance runner (gate + ledger integrity tests)
+├── examples/
+│   ├── simple_app/             # minimal hyper service: guard shim + router (main.rs, Dockerfile, docker-compose.yml, README.md)
+│   └── advanced_app/           # env-driven DetectConfig + route-scoped guard strictness (/admin tree)
+├── docs/                       # mkdocs-material site sources: index.md, usage.md, configuration.md
 ├── conformance/                # vendored spec 4.0.2 corpus, pattern_ledger.toml, xfail_baseline.toml
 ├── fuzz/                       # libfuzzer targets: fuzz_preprocess, fuzz_semantic, fuzz_compiler
 ├── scripts/                    # pin-actions.sh (pinact), benches/ (Python-vs-Rust comparison)
-├── .github/workflows/          # ci.yml, fuzz.yml, greetings/labeler/stale/summary/sync-labels
+├── .github/workflows/          # ci.yml, fuzz.yml, live-smoke.yml, docs.yml, ecosystem-gate.yml, release.yml,
+│                               # greetings.yml, issue-link.yml, labeler.yml, stale.yml, summary.yml, sync-labels.yml
+├── mkdocs.yml                  # mkdocs-material site definition (docs/ sources; site/ is gitignored)
 ├── rust-toolchain.toml         # channel = stable, components = clippy + rustfmt
 ├── rustfmt.toml, clippy.toml, deny.toml
 └── CHANGELOG.md                # [Unreleased] + "Known differences from Python"
 ```
 
 Note: `guard-core-conformance` and the root `conformance/` directory live on the `feat/conformance-ledger` branch until it merges.
+
+## Actions
+
+The workflow set mirrors the engine-class standard (guard-core-go): `ci.yml` (fmt/clippy/test, MSRV, security audit, rustdoc), `fuzz.yml`, `live-smoke.yml` (dockerized compose runs of both example apps with curl assertions of real engine behavior), `docs.yml` (mkdocs-material strict build + gh-deploy to Pages on master), `ecosystem-gate.yml` (matrix over the four Rust adapters, each tested against this engine master via the sibling path-dependency override), `release.yml` (v* tag gate: fmt/clippy/test on stable + MSRV 1.92, conformance gate, tag/version consistency; publishing is manual and owner-gated), plus the community set (`greetings.yml`, `issue-link.yml`, `labeler.yml`, `stale.yml`, `summary.yml`, `sync-labels.yml`). All third-party actions are SHA-pinned.
 
 ## Technology Stack
 

@@ -1,0 +1,27 @@
+# SMOKE_PORT overrides the host port (8080 default) so the stack can run
+# alongside other services; the live-smoke workflow uses the default.
+#
+# No Redis service: guard-core-rs currently ships the CPU-bound detection
+# pipeline only; it exposes no Redis, rate limit, or ban surface to wire up.
+services:
+  simple-app:
+    build:
+      context: ../..
+      dockerfile: examples/simple_app/Dockerfile
+    image: guard-core-rs-simple-app:local
+    ports:
+      - "${SMOKE_PORT:-8080}:8080"
+    environment:
+      - APP_ADDR=0.0.0.0:8080
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 128M

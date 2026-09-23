@@ -1,0 +1,38 @@
+# SMOKE_PORT overrides the host port (8080 default) so the stack can run
+# alongside other services.
+#
+# No Redis service: guard-core-rs currently ships the CPU-bound detection
+# pipeline only; it exposes no Redis, rate limit, or ban surface to wire up.
+services:
+  advanced-app:
+    build:
+      context: ../..
+      dockerfile: examples/advanced_app/Dockerfile
+    image: guard-core-rs-advanced-app:local
+    ports:
+      - "${SMOKE_PORT:-8080}:8080"
+    environment:
+      - APP_ADDR=0.0.0.0:8080
+      - GUARD_MAX_CONTENT_LENGTH=${GUARD_MAX_CONTENT_LENGTH:-10000}
+      - GUARD_MAX_FULL_SCAN_BYTES=${GUARD_MAX_FULL_SCAN_BYTES:-262144}
+      - GUARD_PRESERVE_ATTACK_PATTERNS=${GUARD_PRESERVE_ATTACK_PATTERNS:-true}
+      - GUARD_SEMANTIC_THRESHOLD=${GUARD_SEMANTIC_THRESHOLD:-0.7}
+      - GUARD_THREAT_SCORE_THRESHOLD=${GUARD_THREAT_SCORE_THRESHOLD:-1.0}
+      # Small cap so the 413 rejection is cheap to demonstrate.
+      - GUARD_BODY_CAP=${GUARD_BODY_CAP:-65536}
+      # Admin tree screens at stricter thresholds (defaults: half the general
+      # thresholds), so borderline payloads are caught on admin surface only.
+      - GUARD_ADMIN_SEMANTIC_THRESHOLD=${GUARD_ADMIN_SEMANTIC_THRESHOLD:-0.35}
+      - GUARD_ADMIN_THREAT_SCORE_THRESHOLD=${GUARD_ADMIN_THREAT_SCORE_THRESHOLD:-0.5}
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M

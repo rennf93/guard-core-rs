@@ -24,3 +24,6 @@ target
 
 ### Local ###
 scripts/benches/bench_results.json
+
+# MkDocs build output
+site/
