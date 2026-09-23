@@ -1,7 +1,7 @@
 {
   "suite": "encoding",
-  "spec_version": "4.0.2",
-  "engine_version": "4.0.2",
+  "spec_version": "4.0.3",
+  "engine_version": "4.0.3",
   "cases": [
     {
       "id": "enc_base64_xss_payload",

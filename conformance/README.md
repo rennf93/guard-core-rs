@@ -1,7 +1,7 @@
 # Conformance
 
 Normative conformance harness for [guard-core-rs](https://github.com/rennf93/guard-core-rs)
-against the guard-core spec 4.0.2 fixture corpus. Mirrors the Go port layout
+against the guard-core spec 4.0.3 fixture corpus. Mirrors the Go port layout
 (`guard-core-go/conformance/`): the corpus is vendored byte-identical and a
 native runner compares each case per the rules in `specs/fixtures/README.md`
 of the reference repo.
@@ -13,11 +13,11 @@ conformance/
 ├── README.md                      this file: knob mapping, drift semantics
 ├── pattern_ledger.toml            pattern translation ledger (as_is / translated / residual)
 ├── xfail_baseline.toml            honest expected-fail manifest for the current engine
-└── guard-core-spec-4.0.2/
+└── guard-core-spec-4.0.3/
     ├── CORPUS.md                  vendored corpus provenance + sha256 manifest
     └── cases/                     byte-identical copy of guard-core specs/fixtures/cases/
         ├── index.json
-        └── (11 suite files, 163 cases)
+        └── (12 suite files, 186 cases, 4 baselined xfails)
 ```
 
 Runner code lives in the `guard-core-conformance` workspace crate
@@ -33,7 +33,7 @@ cargo test -p guard-core-conformance --test ledger_integrity -- --nocapture  # l
 
 ## Runner semantics
 
-1. Loads `cases/index.json` and aborts unless `spec_version == 4.0.2`
+1. Loads `cases/index.json` and aborts unless `spec_version == 4.0.3`
    (suite files are also checked against the index version and case counts).
 2. Runs every case through the Rust detect equivalent under the recorded
    `config_knobs` (see mapping below), with the index `fixed_ip`

@@ -1,9 +1,9 @@
-# Pattern translation ledger for spec 4.0.2.
-# Every distinct regex pattern firing in the vendored corpus (guard-core-spec-4.0.2/cases/) appears in exactly one state.
+# Pattern translation ledger for spec 4.0.3.
+# Every distinct regex pattern firing in the vendored corpus (guard-core-spec-4.0.3/cases/) appears in exactly one state.
 # as_is: compiles unchanged with the regex crate.
 # translated: recorded corpus-verified translation; verified_on lists corpus cases whose recorded (match, position) evidence the translation reproduces.
 # residual: constructs the RE2-family regex crate rejects; no translation attempted. Input for the OPEN decision ledger-only vs ledger+fancy-regex; decide nothing here.
-spec_version = '4.0.2'
+spec_version = '4.0.3'
 
 [[as_is]]
 pattern = '<script[^>]*>[^<]*<\/script\s*>'
@@ -354,3 +354,18 @@ constructs = ['negative lookahead (?!...)']
 affected_suites = ['sqli']
 evidence_cases = ['sqli::sqli_inline_comment_obfuscation']
 
+
+[[residual]]
+pattern = '(?<!`)`(?:[A-Za-z0-9_./~]|\$[({])(?:[^`\\\n]|\\.)*`'
+category = 'cmd_injection'
+constructs = ['negative lookbehind (?<!...)']
+affected_suites = ['binary_bodies']
+evidence_cases = ['binary_bodies::binary_text_accented_with_backtick', 'binary_bodies::binary_text_non_latin_with_backtick']
+
+
+[[residual]]
+pattern = '''\A(?:(?!\n).)*var/log/[^\s/]+(?:[&#;,\"'<>]|\s*\Z)'''
+category = 'dir_traversal'
+constructs = ['negative lookahead (?!...)']
+affected_suites = ['binary_bodies']
+evidence_cases = ['binary_bodies::binary_attack_noise_prone_glob_buried']

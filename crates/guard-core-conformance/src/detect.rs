@@ -14,7 +14,7 @@ pub struct Verdict {
     pub processed_length: usize,
 }
 
-/// The ENGINE's detect (spec 4.0.2 `SusPatternsManager.detect` pipeline);
+/// The ENGINE's detect (spec 4.0.3 `SusPatternsManager.detect` pipeline);
 /// this adapter only maps the typed verdict to the corpus JSON shape.
 #[must_use]
 pub fn detect(content: &str, request_context: &str, knobs: &Knobs) -> Verdict {
