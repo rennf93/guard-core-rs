@@ -90,6 +90,30 @@ jobs:
       # Cargo.toml [patch] or --config tricks needed. When the engine is
       # published to crates.io, the path dependencies go away and this gate
       # should switch to a [patch.crates-io] entry instead.
+      # The consumers pin the sibling engine dependency as
+      # `guard-core-engine = { path = "...", version = "X.Y.Z" }`. Cargo
+      # enforces the version requirement even for path dependencies, so the
+      # pin must be aligned with the version at THIS ref before the test
+      # run; otherwise a version-train bump on this repo breaks the gate
+      # until the adapters release their own version bump.
+      - name: Align the sibling engine version pin with this checkout
+        run: |
+          engine_version=$(sed -n 's/^version * = *"\(.*\)"/\1/p' guard-core-rs/crates/guard-core-engine/Cargo.toml | head -1)
+          echo "aligning guard-core-engine pins to ${engine_version}"
+          manifests=("${{ matrix.consumer.path }}/Cargo.toml")
+          if [ -n "${{ matrix.consumer.extra_path }}" ]; then
+            manifests+=("${{ matrix.consumer.extra_path }}/Cargo.toml")
+          fi
+          for manifest in "${manifests[@]}"; do
+            if [ ! -f "$manifest" ]; then
+              continue
+            fi
+            sed -i.bak -E "s/(guard-core-engine *= *\{ *path *= *\"[^\"]*\", *version *= *)\"[^\"]*\"/\1\"${engine_version}\"/" "$manifest"
+            rm -f "$manifest.bak"
+            echo "aligned: $manifest"
+            grep -n 'guard-core-engine' "$manifest" || true
+          done
+
       - name: Install the Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
         with:
