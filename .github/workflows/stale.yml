@@ -55,7 +55,7 @@ jobs:
             If you'd like to keep it moving, please:
             - Rebase or merge the latest `master` into your branch
             - Address any unresolved review comments
-            - Make sure CI is green (`make lint`, `make test`, `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps`)
+            - Make sure CI is green (`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --exclude guard-core-python -- -D warnings`, `cargo test --workspace --exclude guard-core-python`, `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude guard-core-python --no-deps --all-features`)
             - Confirm the entry in `## Unreleased` of `CHANGELOG.md` is still accurate
 
             Otherwise this PR will be closed in 14 days. Closed PRs can always be reopened.

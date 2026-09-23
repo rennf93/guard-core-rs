@@ -1,6 +1,6 @@
 name: Greetings
 
-on: [pull_request, issues]
+on: [pull_request_target, issues]
 
 permissions: {}
 
@@ -11,38 +11,35 @@ jobs:
       issues: write
       pull-requests: write
     steps:
-      - uses: actions/first-interaction@3c71ce730280171fd1cfb57c00c774f8998586f7 # v1
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-          issue-message: |
+    - uses: actions/first-interaction@1c4688942c71f71d4f5502a26ea67c331730fa4d # v3.1.0
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        issue_message: |
             Thanks for opening your first issue on **guard-core-rs**!
 
             To help us triage quickly, please make sure your report includes:
             - A clear reproduction (a short Rust snippet or failing test is ideal)
-            - Output of `rustc --version && cargo --version`
-            - The feature flags you're building with (e.g. `--no-default-features --features geoip`)
-            - Operating system + tokio runtime details if relevant
-            - Logs / backtraces / panic messages
+            - Output of `rustc --version && cargo --version` (MSRV is 1.92)
+            - The crate you are using (`guard-core-rs` facade, `guard-core-engine`, or the PyO3 bindings) and the version you depend on
+            - A conformance data point if relevant: the corpus case id and whether it passes, xfails, or drifts (`cargo test -p guard-core-conformance`)
 
             A few pointers:
-            - Read [CONTRIBUTING.md](../blob/master/CONTRIBUTING.md) for the bug-report and enhancement guidelines.
-            - We follow the [Contributor Covenant Code of Conduct](../blob/master/CODE_OF_CONDUCT.md).
-            - **Security vulnerability?** Do **not** open a public issue - please follow [SECURITY.md](../blob/master/SECURITY.md) and use GitHub's private vulnerability reporting.
+            - Scan [README.md](../blob/master/README.md) and [AGENTS.md](../blob/master/AGENTS.md) for the engine layout and its honest status (the 4.x pattern-table scan stage is not ported yet; do not expect full parity with the Python engine).
+            - **Security vulnerability?** Do **not** open a public issue - please use GitHub's private vulnerability reporting.
 
             Thanks again - a maintainer will be with you soon.
-          pr-message: |
+        pr_message: |
             Thanks for opening your first pull request on **guard-core-rs**!
 
             Quick checklist before review (most of these are enforced by CI, but worth a glance):
-            - [ ] `make lint` - `cargo fmt --check`, `cargo clippy --all-features --all-targets -- -D warnings`, and `cargo check`
-            - [ ] `make test` - full test suite passes (`cargo test --all-features`)
-            - [ ] Coverage didn't regress - `make coverage`
-            - [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --all-features --no-deps` is clean
-            - [ ] New public items have rustdoc with fully qualified intra-doc links
-            - [ ] No `#[allow(...)]` in `src/`, no `// TODO` / `// FIXME` in committed code
-            - [ ] Added an entry under `## Unreleased` in [CHANGELOG.md](../blob/master/CHANGELOG.md)
-            - [ ] If you touched a public API, updated the relevant page under `docs/src/`
+            - [ ] The PR body says `Closes #N` for an open issue (the `issue-link` check enforces it); chores take the `no-issue` label
+            - [ ] `cargo fmt --all -- --check` reports no files
+            - [ ] `cargo clippy --workspace --all-targets --exclude guard-core-python -- -D warnings` is clean
+            - [ ] `cargo test --workspace --exclude guard-core-python` passes
+            - [ ] The conformance gate is green: `cargo test -p guard-core-conformance` (a flipped corpus case needs a ledger or xfail update with a written reason)
+            - [ ] `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude guard-core-python --no-deps --all-features` is clean
+            - [ ] No outer `#[allow(...)]` in non-test, non-fuzz code; an entry under `## Unreleased` in [CHANGELOG.md](../blob/master/CHANGELOG.md)
 
-            See [CONTRIBUTING.md](../blob/master/CONTRIBUTING.md) for the full workflow and the [Code of Conduct](../blob/master/CODE_OF_CONDUCT.md) for the community standards we follow.
+            See [AGENTS.md](../blob/master/AGENTS.md) for the boundary rules (the engine crate stays pure, synchronous, CPU-bound) and the conformance honesty policy.
 
             Welcome aboard - a maintainer will review shortly.
