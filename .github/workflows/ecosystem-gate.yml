@@ -1,0 +1,103 @@
+name: Ecosystem Gate
+
+on:
+  pull_request:
+    branches:
+      - master
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      consumer_ref:
+        description: 'Consumer ref to test against: empty = default branch HEAD, or an explicit ref'
+        required: false
+        default: ''
+
+concurrency:
+  group: ecosystem-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
+
+jobs:
+  consumer-test:
+    name: ${{ matrix.consumer.repo }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        consumer:
+          - repo: rennf93/actix-guard-rs
+            path: actix-guard-rs
+            # Extra sibling checkout the consumer needs besides this engine.
+            extra_repo: ''
+            extra_path: ''
+          - repo: rennf93/axum-guard-rs
+            path: axum-guard-rs
+            # axum-guard-rs consumes tower-guard-rs as a sibling path
+            # dependency, which itself consumes this engine.
+            extra_repo: rennf93/tower-guard-rs
+            extra_path: tower-guard-rs
+          - repo: rennf93/rocket-guard-rs
+            path: rocket-guard-rs
+            extra_repo: ''
+            extra_path: ''
+          - repo: rennf93/tower-guard-rs
+            path: tower-guard-rs
+            extra_repo: ''
+            extra_path: ''
+
+    steps:
+      - name: Checkout guard-core-rs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: guard-core-rs
+          persist-credentials: false
+
+      - name: Checkout ${{ matrix.consumer.repo }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.consumer.repo }}
+          ref: ${{ github.event.inputs.consumer_ref }}
+          path: ${{ matrix.consumer.path }}
+          persist-credentials: false
+
+      - name: Checkout ${{ matrix.consumer.extra_repo }} (sibling dependency)
+        if: matrix.consumer.extra_repo != ''
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.consumer.extra_repo }}
+          ref: master
+          path: ${{ matrix.consumer.extra_path }}
+          persist-credentials: false
+
+      # Path-dependency override mechanism, documented: every adapter
+      # consumes the engine as a sibling path dependency (../guard-core-rs),
+      # so placing this checkout at ../guard-core-rs IS the override. The
+      # suite then compiles and runs against this engine checkout with no
+      # Cargo.toml [patch] or --config tricks needed. When the engine is
+      # published to crates.io, the path dependencies go away and this gate
+      # should switch to a [patch.crates-io] entry instead.
+      - name: Place guard-core-rs at the sibling path dependency location
+        run: mv guard-core-rs ../guard-core-rs
+
+      - name: Install the Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          rustflags: ""
+
+      - name: Run the consumer test suite against this guard-core-rs checkout
+        working-directory: ${{ matrix.consumer.path }}
+        run: |
+          cargo test
+          cargo clippy --all-targets -- -D warnings

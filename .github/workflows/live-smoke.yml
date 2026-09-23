@@ -1,0 +1,200 @@
+name: Live Smoke
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: live-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-smoke:
+    name: Dockerized smoke run (simple_app)
+    runs-on: ubuntu-latest
+    # A cold Rust release build of the example stack takes several minutes;
+    # keep the budget generous.
+    timeout-minutes: 40
+    permissions:
+      contents: read
+
+    env:
+      LIVE_SMOKE_PROJECT: guard-core-rs-live-smoke
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Bring the smoke stack up (guarded app)
+        run: |
+          docker compose -p "$LIVE_SMOKE_PROJECT" -f examples/simple_app/docker-compose.yml up --build -d --wait
+
+      - name: Run smoke assertions
+        run: |
+          set -euo pipefail
+          base="http://localhost:8080"
+
+          check() {
+            local name="$1" expected="$2"; shift 2
+            local code body
+            body=$(curl -sS --max-time 10 -o /tmp/smoke_body -w '%{http_code}' "$@") || {
+              echo "FAIL: $name (curl error)"; exit 1
+            }
+            code="$body"
+            if [ "$code" != "$expected" ]; then
+              echo "FAIL: $name (expected $expected, got $code)"
+              echo "body: $(cat /tmp/smoke_body)"
+              exit 1
+            fi
+            echo "ok: $name -> $code"
+          }
+
+          check "GET / serves"                 200 "$base/"
+          check "GET /health (excluded path)"  200 "$base/health"
+          check "GET /search benign query"     200 -G "$base/search" --data-urlencode 'q=hello'
+
+          # Penetration detection: XSS payload in a query parameter is blocked.
+          code=$(curl -sS --max-time 10 -o /tmp/smoke_body -w '%{http_code}' \
+            -G "$base/search" --data-urlencode 'q=<script>alert(1)</script>')
+          if [ "$code" != "403" ]; then
+            echo "FAIL: XSS query param (expected 403, got $code)"; exit 1
+          fi
+          grep -q "Suspicious activity detected" /tmp/smoke_body || { echo "FAIL: suspicious body"; exit 1; }
+          echo "ok: XSS query param -> 403 suspicious block"
+
+          # Penetration detection: traversal in the path view.
+          code=$(curl -sS --max-time 10 --path-as-is -o /tmp/smoke_body -w '%{http_code}' \
+            "$base/files/../../etc/passwd")
+          if [ "$code" != "403" ]; then
+            echo "FAIL: path traversal (expected 403, got $code)"; exit 1
+          fi
+          grep -q "Suspicious activity detected" /tmp/smoke_body || { echo "FAIL: traversal body"; exit 1; }
+          echo "ok: path traversal -> 403 suspicious block"
+
+          # Body cap: a body over the buffering cap is rejected with 413
+          # instead of being forwarded unscanned.
+          head -c 300000 /dev/zero | tr '\0' 'a' > /tmp/smoke_big_body
+          code=$(curl -sS --max-time 10 -o /tmp/smoke_body -w '%{http_code}' \
+            -X POST --data-binary @/tmp/smoke_big_body "$base/echo")
+          if [ "$code" != "413" ]; then
+            echo "FAIL: oversize body (expected 413, got $code)"; exit 1
+          fi
+          grep -q "Payload too large" /tmp/smoke_body || { echo "FAIL: oversize body"; exit 1; }
+          echo "ok: oversize body -> 413 payload too large"
+
+          # Clean body traffic passes through and reaches the handler.
+          check "POST /echo passthrough" 200 -X POST --data 'hello world' "$base/echo"
+          grep -q "hello world" /tmp/smoke_body || { echo "FAIL: echo body"; exit 1; }
+          echo "ok: POST /echo body passthrough"
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          docker compose -p "$LIVE_SMOKE_PROJECT" -f examples/simple_app/docker-compose.yml logs --no-color
+
+      - name: Bring the smoke stack down
+        if: always()
+        run: |
+          docker compose -p "$LIVE_SMOKE_PROJECT" -f examples/simple_app/docker-compose.yml down -v --remove-orphans
+
+  live-smoke-advanced:
+    name: Dockerized smoke run (advanced_app)
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+
+    env:
+      LIVE_SMOKE_PROJECT: guard-core-rs-live-smoke-advanced
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Bring the smoke stack up (env-configured guarded app)
+        run: |
+          docker compose -p "$LIVE_SMOKE_PROJECT" -f examples/advanced_app/docker-compose.yml up --build -d --wait
+
+      - name: Run smoke assertions
+        run: |
+          set -euo pipefail
+          base="http://localhost:8080"
+
+          check() {
+            local name="$1" expected="$2"; shift 2
+            local code body
+            body=$(curl -sS --max-time 10 -o /tmp/smoke_body_adv -w '%{http_code}' "$@") || {
+              echo "FAIL: $name (curl error)"; exit 1
+            }
+            code="$body"
+            if [ "$code" != "$expected" ]; then
+              echo "FAIL: $name (expected $expected, got $code)"
+              echo "body: $(cat /tmp/smoke_body_adv)"
+              exit 1
+            fi
+            echo "ok: $name -> $code"
+          }
+
+          check "GET / serves"                 200 "$base/"
+          check "GET /health (excluded path)"  200 "$base/health"
+          check "GET /admin/stats"             200 "$base/admin/stats"
+
+          # Penetration detection on the general tree: an obvious XSS payload
+          # is blocked with the default body (CustomErrorResponses do not
+          # exist in this port; the example fixes the default block body).
+          code=$(curl -sS --max-time 10 -o /tmp/smoke_body_adv -w '%{http_code}' \
+            -G "$base/search" --data-urlencode 'q=<script>alert(1)</script>')
+          if [ "$code" != "403" ]; then
+            echo "FAIL: XSS query param (expected 403, got $code)"; exit 1
+          fi
+          grep -q "Suspicious activity detected" /tmp/smoke_body_adv || { echo "FAIL: suspicious body"; exit 1; }
+          echo "ok: XSS query param -> 403 suspicious block"
+
+          # Route-scoped strictness: a borderline payload (an img onerror
+          # handler) passes the general tree but is caught by the stricter
+          # /admin tree.
+          check "GET /search borderline payload" 200 -G "$base/search" --data-urlencode 'q=<img src=x onerror=alert(1)>'
+          code=$(curl -sS --max-time 10 -o /tmp/smoke_body_adv -w '%{http_code}' \
+            -G "$base/admin/stats" --data-urlencode 'q=<img src=x onerror=alert(1)>')
+          if [ "$code" != "403" ]; then
+            echo "FAIL: borderline payload on admin tree (expected 403, got $code)"; exit 1
+          fi
+          grep -q "Suspicious activity detected" /tmp/smoke_body_adv || { echo "FAIL: admin borderline body"; exit 1; }
+          echo "ok: borderline payload -> 200 general, 403 admin"
+
+          # Body cap from the environment: GUARD_BODY_CAP=65536 in compose,
+          # so a 70 KB body is rejected with 413.
+          head -c 70000 /dev/zero | tr '\0' 'a' > /tmp/smoke_big_body_adv
+          code=$(curl -sS --max-time 10 -o /tmp/smoke_body_adv -w '%{http_code}' \
+            -X POST --data-binary @/tmp/smoke_big_body_adv "$base/echo")
+          if [ "$code" != "413" ]; then
+            echo "FAIL: oversize body (expected 413, got $code)"; exit 1
+          fi
+          grep -q "Payload too large" /tmp/smoke_body_adv || { echo "FAIL: oversize body"; exit 1; }
+          echo "ok: oversize body -> 413 payload too large"
+
+          # Clean body traffic passes through and reaches the handler.
+          check "POST /echo passthrough" 200 -X POST --data 'hello world' "$base/echo"
+          grep -q "hello world" /tmp/smoke_body_adv || { echo "FAIL: echo body"; exit 1; }
+          echo "ok: POST /echo body passthrough"
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          docker compose -p "$LIVE_SMOKE_PROJECT" -f examples/advanced_app/docker-compose.yml logs --no-color
+
+      - name: Bring the smoke stack down
+        if: always()
+        run: |
+          docker compose -p "$LIVE_SMOKE_PROJECT" -f examples/advanced_app/docker-compose.yml down -v --remove-orphans
