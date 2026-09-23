@@ -2,6 +2,18 @@
 
 All notable changes to this project.
 
+## [4.0.4] - 2026-09-24
+
+### Added
+
+- First crates.io release of `guard-core-engine` 4.0.4 and `guard-core-rs` 4.0.4; automated publish on GitHub release via `CARGO_REGISTRY_TOKEN`
+- `Makefile` (`install`, `test`, `lint`, `bump-version`, `clean`) and `.github/scripts/bump_version.py` (stdlib-only version train across all workspace crates, `Cargo.lock`, and a CHANGELOG scaffold)
+
+### Changed
+
+- Parity with guard-core 4.0.4: binary-noise gates for binary request bodies, including the SQLi comment-terminator binary gate, and corpus harmonization with the go/php spec 4.0.3 set
+- Version train bumped to 4.0.4 across all workspace member crates; `guard-core-engine` is now publishable (`publish = false` dropped)
+
 ## [Unreleased]
 
 ### Added
