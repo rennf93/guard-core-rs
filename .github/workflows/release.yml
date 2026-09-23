@@ -4,6 +4,8 @@ on:
   push:
     tags:
       - 'v*'
+  release:
+    types: [created]
 
 permissions: {}
 
@@ -77,19 +79,71 @@ jobs:
         with:
           persist-credentials: false
 
-      # Publishing to crates.io is manual and owner-gated; this workflow
-      # never publishes. The consumable check is this tag/version
-      # consistency gate: the tag must equal the guard-core-rs facade crate
-      # version, which the workspace pins for the internal engine dependency
-      # too. A `cargo package`/`cargo publish --dry-run` pass is the
-      # maintainer's responsibility at publish time.
-      - name: Verify tag equals the crate version
+      - name: Install the Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          rustflags: ""
+
+      # Publishing is automated: the publish job below runs on GitHub
+      # release creation. This tag/version consistency gate remains the
+      # cheap check that the tag matches the published crate versions.
+      - name: Verify tag equals the crate versions
         run: |
           tag="${GITHUB_REF_NAME#v}"
-          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "guard-core-rs") | .version')
-          if [ "$tag" != "$version" ]; then
-            echo "tag v$tag does not match crate version $version"
-            exit 1
-          fi
-          echo "ok: tag v$tag matches crate version $version"
-          echo "Publishing is manual and owner-gated: run 'cargo publish -p guard-core-engine' then 'cargo publish -p guard-core-rs' from a clean checkout of this tag as the maintainer."
+          for crate in guard-core-rs guard-core-engine; do
+            version=$(cargo metadata --no-deps --format-version 1 | jq -r --arg c "$crate" '.packages[] | select(.name == $c) | .version')
+            if [ "$tag" != "$version" ]; then
+              echo "tag v$tag does not match $crate version $version"
+              exit 1
+            fi
+            echo "ok: tag v$tag matches $crate version $version"
+          done
+
+  publish:
+    name: Publish to crates.io
+    needs: tag-consistency
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_TOKEN }}
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
+        with:
+          rustflags: ""
+
+      # guard-core-rs depends on guard-core-engine, so the engine must go
+      # first. Each publish is retried up to 3 times (crates.io transient
+      # 5xx). NOTE on reruns: crates.io rejects re-uploading an identical
+      # version, so if guard-core-engine already landed and only the
+      # facade failed, re-run only the "Publish guard-core-rs" step.
+      - name: Publish guard-core-engine
+        run: |
+          for attempt in 1 2 3; do
+            if cargo publish -p guard-core-engine; then
+              exit 0
+            fi
+            echo "attempt $attempt failed; retrying in 30s"
+            sleep 30
+          done
+          echo "guard-core-engine publish failed after 3 attempts"
+          exit 1
+
+      - name: Publish guard-core-rs
+        run: |
+          for attempt in 1 2 3; do
+            if cargo publish -p guard-core-rs; then
+              exit 0
+            fi
+            echo "attempt $attempt failed; retrying in 30s"
+            sleep 30
+          done
+          echo "guard-core-rs publish failed after 3 attempts"
+          exit 1
