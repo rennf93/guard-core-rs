@@ -8,6 +8,8 @@
 //! Re-exports the detection engine modules:
 //!
 //! - [`compiler`] - regex pattern compilation with LRU caching and ReDoS safety validation
+//! - [`detect`] - the spec 4.0.2 detection pipeline entry point (`detect`, [`detect::DetectConfig`],
+//!   [`detect::DetectVerdict`])
 //! - [`preprocessor`] - unicode NFKC normalization, URL/HTML decoding, null byte removal,
 //!   whitespace collapsing, and attack-preserving truncation
 //! - [`semantic`] - token extraction, Shannon entropy, encoding layer detection, attack probability
@@ -33,5 +35,6 @@
 //! ```
 
 pub use guard_core_engine::compiler;
+pub use guard_core_engine::detect;
 pub use guard_core_engine::preprocessor;
 pub use guard_core_engine::semantic;
