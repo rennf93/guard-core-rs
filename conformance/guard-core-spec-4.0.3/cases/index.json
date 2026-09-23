@@ -1,8 +1,8 @@
 {
-  "spec_version": "4.0.2",
-  "engine_version": "4.0.2",
-  "engine_commit": "886f801332e4056b1e44561886e638f8017374eb",
-  "generated_at": "2026-09-18T23:42:07.407988+00:00",
+  "spec_version": "4.0.3",
+  "engine_version": "4.0.3",
+  "engine_commit": "436d6f720e506510c8b7b9fafef095c7335b6ba8",
+  "generated_at": "2026-09-23T03:27:56.203779+00:00",
   "fixed_ip": "203.0.113.7",
   "config_knobs": {
     "detection_compiler_timeout": 2.0,
@@ -50,7 +50,10 @@
       "case_count": 9
     },
     "boundaries": {
-      "case_count": 6
+      "case_count": 8
+    },
+    "binary_bodies": {
+      "case_count": 21
     }
   },
   "comparison": {

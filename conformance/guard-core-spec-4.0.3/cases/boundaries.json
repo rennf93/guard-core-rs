@@ -1,7 +1,7 @@
 {
   "suite": "boundaries",
-  "spec_version": "4.0.2",
-  "engine_version": "4.0.2",
+  "spec_version": "4.0.3",
+  "engine_version": "4.0.3",
   "cases": [
     {
       "id": "boundary_padded_attack",
@@ -126,6 +126,53 @@
         ],
         "original_length": 14725,
         "processed_length": 14725,
+        "detection_method": "enhanced"
+      }
+    },
+    {
+      "id": "boundary_binary_noise_discarded",
+      "input": {
+        "content": "¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�¡�",
+        "context": "request_body"
+      },
+      "expected": {
+        "is_threat": false,
+        "threat_score": 0.0,
+        "threats": [],
+        "original_length": 1600,
+        "processed_length": 999,
+        "detection_method": "enhanced"
+      }
+    },
+    {
+      "id": "boundary_binary_noise_payload_gap_kept",
+      "input": {
+        "content": "                                                                                ../../../etc/passwd                                                                                ",
+        "context": "request_body"
+      },
+      "expected": {
+        "is_threat": true,
+        "threat_score": 1.0,
+        "threats": [
+          {
+            "type": "regex",
+            "pattern": "(?:\\.\\.\\/|\\.\\.\\\\)(?:\\.\\.\\/|\\.\\.\\\\)+",
+            "match": "../../../",
+            "position": 0,
+            "category": "dir_traversal",
+            "weight": 1.0
+          },
+          {
+            "type": "regex",
+            "pattern": "\\A(?:(?!\\n).)*etc/(?:passwd|shadow|group|hosts|motd|issue|mysql/my\\.cnf|ssh/ssh_config)(?:[&#;,\\\"'<>]|\\s*\\Z)",
+            "match": "                                                                                ../../../etc/passwd                                                                                ",
+            "position": 0,
+            "category": "dir_traversal",
+            "weight": 1.0
+          }
+        ],
+        "original_length": 779,
+        "processed_length": 19,
         "detection_method": "enhanced"
       }
     }

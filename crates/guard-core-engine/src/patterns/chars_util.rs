@@ -52,10 +52,20 @@ where
 }
 
 /// Python `str.find(sub, start, end)`.
+///
+/// `from` arrives as a byte offset that Python computes in code-point space
+/// (callers do arithmetic like `pos + 1` or `barrier + 1 - len(opening)`).
+/// A mid-char `from` snaps forward to the next boundary, which is exactly
+/// where Python's next code point starts; an ASCII-delimiter match can never
+/// begin inside a multi-byte char, so no match is skipped.
 #[must_use]
 pub fn str_find_from(s: &str, needle: &str, from: usize) -> Option<usize> {
     if from > s.len() {
         return None;
+    }
+    let mut from = from;
+    while from < s.len() && !s.is_char_boundary(from) {
+        from += 1;
     }
     s[from..].find(needle).map(|i| i + from)
 }

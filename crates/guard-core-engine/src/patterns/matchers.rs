@@ -449,14 +449,20 @@ fn tautology_complete(haystack: &str, match_start: usize, atom: regex::Match<'_>
             continue;
         }
         cursor = walk_forward_while(haystack, cursor + 1, char::is_whitespace);
-        if haystack[cursor..].len() < atom_text.len() {
+        // Python compares the same number of CHARACTERS as the atom (the
+        // reference re-matches the atom text case-insensitively); a byte
+        // count would split multi-byte chars on binary-decoded content.
+        let mut second_chars = haystack[cursor..].chars();
+        let equals_atom = atom_text.chars().all(|ac| {
+            second_chars
+                .next()
+                .is_some_and(|bc| bc.eq_ignore_ascii_case(&ac))
+        });
+        if !equals_atom {
             continue;
         }
-        let second = &haystack[cursor..cursor + atom_text.len()];
-        if !second.eq_ignore_ascii_case(&atom_text) {
-            continue;
-        }
-        let after = cursor + atom_text.len();
+        let atom_len = atom_text.chars().map(char::len_utf8).sum::<usize>();
+        let after = cursor + atom_len;
         let before_word = char_before(haystack, after).is_some_and(|(_, c)| py_is_word(c));
         let after_word = char_at(haystack, after).is_some_and(|(_, c)| py_is_word(c));
         if before_word != after_word {

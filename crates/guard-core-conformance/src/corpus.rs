@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use serde_json::Value;
 
-pub const EXPECTED_SPEC_VERSION: &str = "4.0.2";
+pub const EXPECTED_SPEC_VERSION: &str = "4.0.3";
 
 #[derive(Deserialize)]
 pub struct IndexFile {
@@ -76,7 +76,7 @@ impl CorpusCase {
 
 #[must_use]
 pub fn corpus_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../conformance/guard-core-spec-4.0.2/cases")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../conformance/guard-core-spec-4.0.3/cases")
 }
 
 #[must_use]

@@ -234,6 +234,85 @@ fn batch_threat_scores(py: Python<'_>, contents: Vec<String>, max_length: usize)
     })
 }
 
+/// Run the full spec detection pipeline (`detect`) on one request content.
+///
+/// Parameters
+/// ----------
+/// content : str
+///     Raw request content to scan.
+/// request_context : str
+///     Detection context (`query_param`, `header`, `url_path`,
+///     `request_body`, `unknown`).
+/// max_content_length : int, optional
+///     `detection_max_content_length` (default 10000).
+/// max_full_scan_bytes : int, optional
+///     `detection_max_body_inspect_bytes` (default 262144).
+/// preserve_attack_patterns : bool, optional
+///     `detection_preserve_attack_patterns` (default True).
+/// semantic_threshold : float, optional
+///     `detection_semantic_threshold` (default 0.7).
+/// threat_score_threshold : float, optional
+///     `detection_threat_score_threshold` (default 1.0).
+///
+/// Returns
+/// -------
+/// dict
+///     Detect verdict with keys: is_threat, threat_score, threats,
+///     original_length, processed_length. Threat positions are Unicode
+///     code-point indices into the scanned view (Python str index space).
+#[pyfunction]
+#[pyo3(signature = (content, request_context, max_content_length=10_000, max_full_scan_bytes=262_144, preserve_attack_patterns=true, semantic_threshold=0.7, threat_score_threshold=1.0))]
+#[allow(clippy::too_many_arguments)] // PyO3 boundary: one argument per spec knob
+fn detect_verdict(
+    py: Python<'_>,
+    content: &str,
+    request_context: &str,
+    max_content_length: usize,
+    max_full_scan_bytes: usize,
+    preserve_attack_patterns: bool,
+    semantic_threshold: f64,
+    threat_score_threshold: f64,
+) -> PyResult<Py<PyDict>> {
+    let config = guard_core_engine::detect::DetectConfig {
+        max_content_length,
+        max_full_scan_bytes,
+        preserve_attack_patterns,
+        semantic_threshold,
+        threat_score_threshold,
+    };
+    let verdict = guard_core_engine::detect::detect(content, request_context, &config);
+
+    let dict = PyDict::new(py);
+    dict.set_item("is_threat", verdict.is_threat)?;
+    dict.set_item("threat_score", verdict.threat_score)?;
+    dict.set_item("original_length", verdict.original_length)?;
+    dict.set_item("processed_length", verdict.processed_length)?;
+
+    let threats = PyList::empty(py);
+    for threat in &verdict.threats {
+        let entry = PyDict::new(py);
+        match threat {
+            guard_core_engine::detect::Threat::Regex(r) => {
+                entry.set_item("type", "regex")?;
+                entry.set_item("pattern", &r.pattern)?;
+                entry.set_item("match", &r.match_text)?;
+                entry.set_item("position", r.position)?;
+                entry.set_item("category", &r.category)?;
+                entry.set_item("weight", r.weight)?;
+            }
+            guard_core_engine::detect::Threat::Semantic(sm) => {
+                entry.set_item("type", "semantic")?;
+                entry.set_item("attack_type", &sm.attack_type)?;
+                entry.set_item("score", sm.score)?;
+            }
+        }
+        threats.append(entry)?;
+    }
+    dict.set_item("threats", threats)?;
+
+    Ok(dict.into())
+}
+
 #[pymodule]
 fn guard_core_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(preprocess, m)?)?;
@@ -246,5 +325,6 @@ fn guard_core_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(detect_obfuscation, m)?)?;
     m.add_function(wrap_pyfunction!(validate_pattern_safety, m)?)?;
     m.add_function(wrap_pyfunction!(batch_threat_scores, m)?)?;
+    m.add_function(wrap_pyfunction!(detect_verdict, m)?)?;
     Ok(())
 }
