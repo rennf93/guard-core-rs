@@ -1,6 +1,7 @@
 [package]
 name         = "guard-core-engine"
 version      = "4.0.4"
+description  = "Detection engine for the Guard ecosystem: pattern compilation, input preprocessing, and semantic analysis."
 edition      = { workspace = true }
 license      = { workspace = true }
 rust-version = { workspace = true }
