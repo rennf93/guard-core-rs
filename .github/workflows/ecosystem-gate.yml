@@ -82,15 +82,14 @@ jobs:
           persist-credentials: false
 
       # Path-dependency override mechanism, documented: every adapter
-      # consumes the engine as a sibling path dependency (../guard-core-rs),
-      # so placing this checkout at ../guard-core-rs IS the override. The
-      # suite then compiles and runs against this engine checkout with no
+      # consumes the engine as a sibling path dependency
+      # (../guard-core-rs/crates/guard-core-engine), and the engine checkout
+      # above (path: guard-core-rs) already sits exactly at that location
+      # relative to each consumer directory. That placement IS the override:
+      # the suite compiles and runs against this engine checkout with no
       # Cargo.toml [patch] or --config tricks needed. When the engine is
       # published to crates.io, the path dependencies go away and this gate
       # should switch to a [patch.crates-io] entry instead.
-      - name: Place guard-core-rs at the sibling path dependency location
-        run: mv guard-core-rs ../guard-core-rs
-
       - name: Install the Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@46268bd060767258de96ed93c1251119784f2ab6 # v1.16.1
         with:
