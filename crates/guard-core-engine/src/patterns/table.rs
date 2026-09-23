@@ -987,6 +987,11 @@ pub static NOISE_PRONE_PATTERN_SOURCES: LazyLock<std::collections::HashSet<&'sta
             r"\$\{[^}]*(?:@[\w.]+@|\b\w+\s*\(|\d+\s*[*/%+\-]\s*\d+)[^}]*\}",
             r"\(\s*[&|]\s*",
             r#"\w+(?:['\"]+\w+){1,10}"#,
+            // SQLi comment terminators span arbitrary whitespace between the
+            // quote and the -- / # terminator, so they routinely fire inside
+            // text-decoded binary bodies (e.g. "'\n--" byte runs in compressed
+            // payloads). Parity with upstream commit f5d53ca5.
+            r"'\s*(?:[\);]+\s*)?--|'[\);]*#(?:\n|\Z)",
         ])
     });
 

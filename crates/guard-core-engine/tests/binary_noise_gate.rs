@@ -15,7 +15,7 @@
 //! fires on the same real-world byte sequences because both representations
 //! count the same bad bytes toward the density window.
 
-use guard_core_engine::detect::{self, DetectConfig};
+use guard_core_engine::detect::{self, DetectConfig, Threat};
 use guard_core_engine::patterns::{self, table};
 use guard_core_engine::preprocessor;
 
@@ -358,8 +358,21 @@ fn binary_noise_scan_completes_under_five_seconds() {
 /// the MT19937 generator reproduces the reference payloads byte-for-byte.
 #[test]
 fn noise_prone_registry_is_truthful() {
+    // Sources whose shape requires a specific trigram/terminator run (e.g. the
+    // SQLi comment terminator "'\n--") cannot be expected to occur in pure
+    // random noise; their registry membership and suppression are covered by
+    // the dedicated tests below (upstream commit f5d53ca5).
+    const TRIGRAM_SHAPED_SOURCES: [&str; 1] = [r"'\s*(?:[\);]+\s*)?--|'[\);]*#(?:\n|\Z)"];
+
     let noise_prone: Vec<&str> = table::NOISE_PRONE_PATTERN_SOURCES.iter().copied().collect();
-    assert_eq!(noise_prone.len(), 9, "registry must stay frozen");
+    assert_eq!(noise_prone.len(), 10, "registry must stay frozen");
+
+    for source in TRIGRAM_SHAPED_SOURCES {
+        assert!(
+            noise_prone.contains(&source),
+            "trigram-shaped source must stay in the noise-prone registry: {source}"
+        );
+    }
 
     let mut matched_sources: std::collections::HashSet<String> = std::collections::HashSet::new();
     for seed in NOISE_SEEDS {
@@ -391,9 +404,101 @@ fn noise_prone_registry_is_truthful() {
         }
     }
     for source in &noise_prone {
+        if TRIGRAM_SHAPED_SOURCES.contains(source) {
+            continue;
+        }
         assert!(
             matched_sources.contains(*source),
             "noise-prone pattern never fired on binary noise: {source}"
         );
     }
+}
+
+/// The PDF-prefix regression (upstream commit f5d53ca5): a PDF header whose
+/// binary comment region contains an apostrophe, a newline and dashes must
+/// not be reported as SQLi (real-world 558KB-PDF false positive).
+#[test]
+fn pdf_comment_line_with_sqli_terminator_bytes_not_flagged() {
+    let pdf_prefix: &[u8] =
+        b"%PDF-1.4\n%\xc7\x8f\xa2\n7 0 obj\n<</Length 8 0 R/Filter /FlateDecode>>\nstream\n";
+    let mut buffer = pdf_prefix.to_vec();
+    buffer.extend_from_slice(&noise_bytes(11)[..2000]);
+    buffer[100..104].copy_from_slice(b"'\n--");
+
+    let verdict = detect_str(&decode_lossy(&buffer));
+    assert!(
+        !verdict.is_threat,
+        "PDF comment line with SQLi terminator bytes flagged: {:?}",
+        verdict.threats
+    );
+    assert!(verdict.threats.is_empty());
+}
+
+/// The noise gate must not swallow genuine ASCII SQLi comment terminators.
+#[test]
+fn ascii_sqli_comment_terminator_outside_binary_still_detected() {
+    let verdict = detect_str("users?name=1=1' \n-- drop table users");
+    assert!(
+        verdict.is_threat,
+        "ASCII SQLi comment terminator not detected"
+    );
+    assert!(
+        verdict.threats.iter().any(|t| matches!(
+            t,
+            Threat::Regex(r) if r.category == "sqli"
+        )),
+        "expected an sqli-category threat: {:?}",
+        verdict.threats
+    );
+}
+
+/// The SQLi comment-terminator source is registered as noise-prone: a match
+/// whose neighborhood is binary-dense must be dropped by the gate equivalent
+/// of the reference `_build_regex_threat` (`find_first_threat`), while the
+/// same match in ASCII surroundings survives (covered by
+/// `ascii_sqli_comment_terminator_outside_binary_still_detected`).
+#[test]
+fn sqli_comment_terminator_source_is_noise_gated() {
+    const SOURCE: &str = r"'\s*(?:[\);]+\s*)?--|'[\);]*#(?:\n|\Z)";
+
+    let dense_noise = decode_lossy(&noise_bytes(11));
+    let dense_noise: String = dense_noise.chars().take(200).collect();
+    let text = format!("abc \n' \n--{dense_noise}");
+
+    let entry = patterns::COMPILED_TABLE
+        .iter()
+        .find(|e| e.entry.source == SOURCE)
+        .expect("comment-terminator entry must exist in the compiled table");
+
+    // Real density prefix over the fixture: the neighborhood right of the
+    // match is binary dense, so the gated query must find nothing...
+    let prefix = patterns::binary::build_binary_prefix(&text);
+    assert!(
+        patterns::find_first_threat(entry, &text, "request_body", Some(&prefix)).is_none(),
+        "binary-dense comment-terminator match must be gated"
+    );
+
+    // ...and the gate must actually be load-bearing for this fixture: with a
+    // zeroed prefix (gate off) the same match is accepted.
+    let gate_off = vec![0u32; text.chars().count() + 1];
+    assert!(
+        patterns::find_first_threat(entry, &text, "request_body", Some(&gate_off)).is_some(),
+        "comment-terminator match must survive with the gate off"
+    );
+
+    // The same match in ASCII surroundings is not gated either.
+    assert!(
+        patterns::find_first_threat(
+            entry,
+            "abc \n' \n-- drop table users",
+            "request_body",
+            Some(&prefix_for("abc \n' \n-- drop table users")),
+        )
+        .is_some(),
+        "ASCII comment-terminator match must survive the gate"
+    );
+}
+
+fn prefix_for(text: &str) -> Vec<u32> {
+    patterns::binary::build_binary_prefix(text)
 }
