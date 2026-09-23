@@ -1,6 +1,16 @@
 //! Binary artifact density gate and binary-content heuristic, ported from
 //! `guard_core/detection_engine/binary_prefix.py` and `semantic.py`
-//! (`looks_like_binary_content`), spec 4.0.2.
+//! (`looks_like_binary_content`).
+//!
+//! String-model mapping: the reference scans decoded text where undecodable
+//! bytes surface as surrogateescape code points (U+DC80..U+DCFF) and mojibake
+//! as U+FFFD; both classes count as artifacts. The engine scans `&str` (always
+//! valid UTF-8), so undecodable bytes never reach this module as surrogates;
+//! the port's decode boundary represents them as U+FFFD (or drops them), which
+//! is an artifact class here. The surrogate branch is kept for parity with the
+//! reference class definition but is unreachable for `char`. All window
+//! arithmetic runs on code-point indices, the same index space the corpus
+//! mandates for threat positions.
 
 /// Cumulative artifact-count prefix: `counts[i]` = artifacts in `s[..i]`.
 /// Built over code points; indexing is by code-point index (the same space
@@ -58,14 +68,14 @@ fn is_binary_artifact(c: char) -> bool {
     false
 }
 
-/// The only characters in `0x80..=0x024F` treated as text.
+/// The only characters in `0x80..=0x024F` treated as text. Mirrors the
+/// reference class complement exactly: within `0x80..=0xBF` only the
+/// punctuation/marker singles are text, and all of `0xC0..=0xFF` (including
+/// the multiplication and division signs) plus `0x100..=0x17F` are text.
 #[must_use]
 fn is_text_allowlist(c: char) -> bool {
     let cp = c as u32;
-    if (0x00DF..=0x00FF).contains(&cp) && cp != 0x00F7 {
-        return true;
-    }
-    if (0x00C0..=0x00DE).contains(&cp) && cp != 0x00D7 {
+    if (0x00C0..=0x00FF).contains(&cp) {
         return true;
     }
     if matches!(
@@ -119,6 +129,47 @@ mod tests {
     #[test]
     fn accented_text_is_allowed() {
         let prefix = build_binary_prefix("caf\u{00e9} cr\u{00e8}me br\u{00fb}l\u{00e9}");
+        assert_eq!(prefix.last(), Some(&0));
+    }
+
+    #[test]
+    fn artifact_classes_match_reference_exactly() {
+        // The reference `_BINARY_ARTIFACT_RE` class set, collapsed to ranges
+        // over the BMP ranges it covers (verified against guard-core 4.0.3).
+        // Everything below 0x300 outside these ranges is text.
+        const ARTIFACT_RANGES: &[(u32, u32)] = &[
+            (0x00, 0x08),
+            (0x0B, 0x0C),
+            (0x0E, 0x1F),
+            (0x7F, 0xA2),
+            (0xA4, 0xA4),
+            (0xA6, 0xA9),
+            (0xAB, 0xAF),
+            (0xB4, 0xB4),
+            (0xB6, 0xB8),
+            (0xBB, 0xBF),
+            (0x0180, 0x024F),
+        ];
+        let is_ref_artifact = |cp: u32| {
+            ARTIFACT_RANGES
+                .iter()
+                .any(|(lo, hi)| (*lo..=*hi).contains(&cp))
+        };
+        for cp in 0u32..=0x3000 {
+            let c = char::from_u32(cp).expect("BMP scalar");
+            assert_eq!(
+                is_binary_artifact(c),
+                is_ref_artifact(cp),
+                "artifact mismatch at U+{cp:04X}"
+            );
+        }
+    }
+
+    #[test]
+    fn latin1_punctuation_signs_are_text() {
+        // U+00D7 (multiplication sign) and U+00F7 (division sign) sit in the
+        // reference's text allowlist (all of 0xC0..=0xFF is text).
+        let prefix = build_binary_prefix("3 \u{00d7} 4 \u{00f7} 2");
         assert_eq!(prefix.last(), Some(&0));
     }
 }
