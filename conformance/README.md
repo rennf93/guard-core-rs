@@ -17,7 +17,7 @@ conformance/
     ├── CORPUS.md                  vendored corpus provenance + sha256 manifest
     └── cases/                     byte-identical copy of guard-core specs/fixtures/cases/
         ├── index.json
-        └── (12 suite files, 186 cases, 4 baselined xfails)
+        └── (12 suite files, 184 cases, 0 baselined xfails)
 ```
 
 Runner code lives in the `guard-core-conformance` workspace crate
@@ -118,7 +118,7 @@ the vendored corpus, exactly once, in one of:
   runs the translated regex directly, so it converts the `regex` crate's byte
   spans to code-point indices when checking recorded positions (the same
   boundary conversion the engine performs)
-- `residual`: uses constructs the RE2-family `regex` crate rejects (20
+- `residual`: uses constructs the RE2-family `regex` crate rejects (21
   patterns: lookbehind/lookahead, one backreference). No translation is
   attempted.
 

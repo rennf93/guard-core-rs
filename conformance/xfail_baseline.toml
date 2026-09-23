@@ -1,16 +1,13 @@
 # Expected-fail baseline for the guard-core-rs conformance runner against spec 4.0.3.
 # The engine runs the full 4.x detect pipeline (pattern table across the four
-# scan views, semantic analysis, scoring) and passes the corpus except the four
-# uniform-random-noise cases baselined below.
+# scan views, semantic analysis, scoring) and passes the corpus. The corpus is
+# the go/php vendored spec 4.0.3 set: it deliberately excludes full-entropy
+# random-noise binary cases, whose decode-stage parity gaps are covered by the
+# guard-core-engine binary_noise_gate honesty tests instead.
 #
 # Drift semantics (fail-closed, enforced by tests/conformance.rs and src/report.rs):
 #   - failing case NOT listed here -> gate fails (unbaselined failure)
 #   - listed case that now PASSES  -> gate fails (stale baseline; remove the entry)
 #   - failing case listed here     -> xfail (tolerated, reported four-way)
 spec_version = '4.0.3'
-cases = [
-    { case = 'binary_bodies::binary_benign_noise_latin1', reason = 'pre-existing decode-stage parity gap, not the 4.0.3 gate: the iterative base64/URL/HTML decode of uniform-random 256 KiB latin-1 noise diverges from the reference by a handful of code points, so processed_length differs while is_threat, threat_score and the threat set match. Engine verdict parity for these payloads is proven by the guard-core-engine binary_noise_gate honesty tests, which reproduce the reference payload bytes.' },
-    { case = 'binary_bodies::binary_benign_noise_latin1_b', reason = 'same decode-stage parity gap as binary_benign_noise_latin1 (seed 3 variant).' },
-    { case = 'binary_bodies::binary_benign_noise_lossy', reason = 'same decode-stage parity gap as binary_benign_noise_latin1 (lossy-decoded view).' },
-    { case = 'binary_bodies::binary_benign_noise_lossy_b', reason = 'same decode-stage parity gap as binary_benign_noise_latin1 (seed 3, lossy-decoded view).' },
-]
+cases = []
