@@ -2,27 +2,34 @@
 
 Byte-identical copy of the reference fixture corpus from
 [guard-core](https://github.com/rennf93/guard-core) at
-`specs/fixtures/cases/`, reference commit
-`436d6f720e506510c8b7b9fafef095c7335b6ba8` (the 4.0.3 release commit,
-matches `index.json` `engine_commit`), spec_version 4.0.3, 12 suites,
-186 cases.
+`specs/fixtures/cases/`, vendored set shared byte-identically with the go
+and php ports (canonical `binary_bodies.json`
+sha256 `f0833a86af7bb78a7c9e48512e0cf523081db185496e32b355e04e2f86424ec5`),
+`index.json` `engine_commit`
+`810d86cccf31207f9257de00a47bd2060fd16bba`, spec_version 4.0.3, 12 suites,
+184 cases.
 
-The corpus was regenerated at spec 4.0.3 from the reference generator with
-one new suite, `binary_bodies.json`: binary-body vectors for the 4.0.3
-noise gate (upstream commit 436d6f72, released 2026-09-21). The payload
-classes are taken verbatim from the payload constants in the reference
-honesty suite (`tests/test_sus_patterns/test_pattern_binary_noise_gate.py`)
+The corpus gained one suite at spec 4.0.3, `binary_bodies.json`: binary-body
+vectors for the 4.0.3 noise gate (upstream commit 436d6f72, released
+2026-09-21). The payload classes are taken verbatim from the payload constants
+in the reference honesty suite (`tests/test_sus_patterns/test_pattern_binary_noise_gate.py`)
 so every port generates byte-identical vectors:
 
-- `binary_benign_*`: benign binary blobs (random noise in the latin-1 and
-  lossy-decoded views, a zip upload, control-byte runs) that 4.0.2 wrongly
-  blocked and 4.0.3 must pass
-- `binary_attack_noise_prone_*`: noise-prone pattern matches inside
-  artifact-dense binary content that the gate must discard
+- `binary_benign_*`: benign binary blobs (a zip upload, control-byte-only
+  runs, benign fragments buried in padding) that 4.0.2 wrongly blocked and
+  4.0.3 must pass
 - `binary_attack_*`: attacks hidden in binary padding (padded webshell,
-  pickle opcode stream, base64-fragmented multipart part) that must still
-  be caught (signature patterns are never gated)
-- `binary_text_*`: pure-text, accented, and non-Latin controls, unchanged
+  pickle opcodes, base64-fragmented multipart part, sqli and traversal
+  padding) that must still be caught (signature patterns are never gated)
+- `binary_text_*`: pure-text and backtick-embedded controls, unchanged
+
+The full-entropy uniform-random-noise payloads from the upstream payload
+constants are deliberately excluded from the vendored corpus: they stress-test
+decoder pipelines far outside the noise gate and expose pre-existing,
+gate-unrelated decoder divergences in individual ports. Their engine-verdict
+parity is covered by each port's in-repo honesty suite instead (the
+`binary_noise_gate` honesty tests, which reproduce the reference MT19937
+payload bytes).
 
 The corpus stores text as valid Unicode: the reference's surrogateescape
 decode view is mapped to the lossy representation (undecodable bytes
@@ -39,13 +46,13 @@ per repo convention.
 
 ```
 070ef1f9b4f3ee11c707ae30a27a96915edbe8f27c2800c8588b31d3feb2902f  cases/benign.json
-2171d675878c9bf8f86662e88fc8e5e382a171aa18847fca1f023d16ddc792e9  cases/binary_bodies.json
+f0833a86af7bb78a7c9e48512e0cf523081db185496e32b355e04e2f86424ec5  cases/binary_bodies.json
 8e0726f7a980baa583faf2fdd5cdf8e81b9592b13025ca655cf46d8bff6bb30e  cases/boundaries.json
 8240c4532e74af8a9c97355732c79a3ebf2a9c312ec66a42e9f7cce0d59ca4cb  cases/cmd_injection.json
 c816840563ad9cd5ac7f0d8c83cc588f1867a84e05eec1fc76fc8f8e0b4c10ed  cases/context_matrix.json
 bc5a301f4222d3892fc99aeed6afdcb1f9ef450ce032c09597cadf8a604eb168  cases/encoding.json
 08e71c1eb5d0e69272dd3ac11f7ea26aee2a5768e280d893affd97fea6988a16  cases/inclusion_sensitive_recon.json
-50f9f196c516b9a1a6cc2145df7fd7894ca6efc55afdb2a059e3de3f80e399f6  cases/index.json
+81700b92284ce81a3090a821ffbf9a30679101d657416b27f388e64f98a32c0f  cases/index.json
 1e62cc5e9671b0bc223ab4490cea6d4a731b4d7c43edf0ea396aeb8249622086  cases/misc_injection.json
 88a7ecc79f8a07153d5e5a01d2da308e1d4d10af7373f4d7fda770a5f6c2d760  cases/path_traversal.json
 6115655b2ba921c63dc335986c33ac8652652c07c9987b95461de619c112cd2c  cases/semantic.json

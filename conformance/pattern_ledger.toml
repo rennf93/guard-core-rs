@@ -360,12 +360,4 @@ pattern = '(?<!`)`(?:[A-Za-z0-9_./~]|\$[({])(?:[^`\\\n]|\\.)*`'
 category = 'cmd_injection'
 constructs = ['negative lookbehind (?<!...)']
 affected_suites = ['binary_bodies']
-evidence_cases = ['binary_bodies::binary_text_accented_with_backtick', 'binary_bodies::binary_text_non_latin_with_backtick']
-
-
-[[residual]]
-pattern = '''\A(?:(?!\n).)*var/log/[^\s/]+(?:[&#;,\"'<>]|\s*\Z)'''
-category = 'dir_traversal'
-constructs = ['negative lookahead (?!...)']
-affected_suites = ['binary_bodies']
-evidence_cases = ['binary_bodies::binary_attack_noise_prone_glob_buried']
+evidence_cases = ['binary_bodies::binary_text_backtick_embedded_sample0', 'binary_bodies::binary_text_backtick_embedded_sample1', 'binary_bodies::binary_text_backtick_embedded_sample2']
