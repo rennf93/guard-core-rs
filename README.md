@@ -7,7 +7,7 @@ Rust port of the [guard-core](https://github.com/rennf93/guard-core) detection e
 
 ## Status
 
-Production port of the Python engine, tracked against guard-core 4.0.4 with a conformance corpus. Used by the Rust adapters: [tower-guard-rs](https://github.com/rennf93/tower-guard-rs), [axum-guard-rs](https://github.com/rennf93/axum-guard-rs), [actix-guard-rs](https://github.com/rennf93/actix-guard-rs), and [rocket-guard-rs](https://github.com/rennf93/rocket-guard-rs).
+Production port of the Python engine, tracked against guard-core 4.0.x with a conformance corpus. Used by the Rust adapters: [tower-guard-rs](https://github.com/rennf93/tower-guard-rs), [axum-guard-rs](https://github.com/rennf93/axum-guard-rs), [actix-guard-rs](https://github.com/rennf93/actix-guard-rs), and [rocket-guard-rs](https://github.com/rennf93/rocket-guard-rs).
 
 Docs: https://rennf93.github.io/guard-core-rs/
 
