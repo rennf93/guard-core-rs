@@ -1,19 +1,29 @@
 # guard-core-rs
 
-Rust implementation of the [guard-core](https://github.com/rennf93/guard-core) detection engine. **Work in progress - namespace placeholder.**
+Rust port of the [guard-core](https://github.com/rennf93/guard-core) detection engine. The workspace ships two published crates:
+
+- `guard-core-engine` (4.0.4 on crates.io): the detection engine entry point used by the framework adapters.
+- `guard-core-rs` (4.0.4 on crates.io): the facade crate re-exporting `compiler`, `preprocessor`, and `semantic`.
 
 ## Status
 
-This crate is reserved for the upcoming Rust port of guard-core, the application-layer API security engine that powers [fastapi-guard](https://github.com/rennf93/fastapi-guard) and the broader Guard ecosystem.
+Production port of the Python engine, tracked against guard-core 4.0.4 with a conformance corpus. Used by the Rust adapters: [tower-guard-rs](https://github.com/rennf93/tower-guard-rs), [axum-guard-rs](https://github.com/rennf93/axum-guard-rs), [actix-guard-rs](https://github.com/rennf93/actix-guard-rs), and [rocket-guard-rs](https://github.com/rennf93/rocket-guard-rs).
 
-The Python reference implementation is production-ready and used by 89K+ developers. The Rust port is in early planning.
+Docs: https://rennf93.github.io/guard-core-rs/
+
+## Install
+
+```sh
+cargo add guard-core-engine@4.0.4
+```
 
 ## Links
 
 - Python reference: https://github.com/rennf93/guard-core
-- FastAPI integration: https://github.com/rennf93/fastapi-guard
 - TypeScript port: https://github.com/rennf93/guard-core-ts
-- Cloud platform: https://app.fastapi-guard.com
+- Adapters: [tower](https://github.com/rennf93/tower-guard-rs), [axum](https://github.com/rennf93/axum-guard-rs), [actix-web](https://github.com/rennf93/actix-guard-rs), [rocket](https://github.com/rennf93/rocket-guard-rs)
+- Telemetry: [guard-agent-rs](https://github.com/rennf93/guard-agent-rs)
+- Cloud platform: https://app.guard-core.com
 
 ## License
 
