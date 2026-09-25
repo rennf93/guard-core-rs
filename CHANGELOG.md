@@ -6,6 +6,7 @@ All notable changes to this project.
 
 ### Fixed
 
+- Structural matchers fold ASCII case like the reference engine: every builtin row compiles under a global `re.IGNORECASE` (`suspatterns_handler.py`), so the sensitive-path, cms-probing, recon, file-upload and proto-pollution matchers now catch uppercase probes (`/SAP`, `/.ENV`, `Thumbs.DB`, `/DOCKERFILE`, `filename="shell.PHP.jpg"`, `object.prototype.x = 1`) exactly as guard-core does; the four `(?-i:...)` deserialization base64 magic rows stay case-sensitive, which was already correct
 - Recon whole-value rows with an optional leading path separator no longer read bare query or body values such as `?system=SAP` or `README.md` as probe paths: on `query_param`/`request_body` (embedded JSON leaves included) those hits are rejected unless the value starts with `/` or `\`, while `url_path` and `unknown` are unchanged and separator-leading probes still fire. Gated rows are derived from the table (recon category plus the `\A[/\]?` anchor), matching guard-core #115 (upstream commit 08f79d67)
 
 ## [4.0.4] - 2026-09-24

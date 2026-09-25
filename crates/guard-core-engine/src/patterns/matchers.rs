@@ -676,12 +676,15 @@ fn sensitive_path_finditer(
 }
 
 /// Anchored literal alternatives: `(?:alt|alt|...)` matched at `pos`.
+///
+/// The reference compiles these rows with builtin IGNORECASE
+/// (`_BUILTIN_PATTERN_COMPILE_FLAGS`), so the literals fold ASCII case.
 fn literal_bad<'a>(alternatives: &'a [&'a str]) -> BadMatcher<'a> {
     Box::new(move |haystack: &str, pos: usize| -> Vec<usize> {
         let mut ends = Vec::new();
         for alt in alternatives {
             // alternatives may contain embedded separators (`system/version`)
-            if haystack[pos..].starts_with(alt) {
+            if ascii_starts_with_ignore_case(haystack, pos, alt) {
                 ends.push(pos + alt.len());
             }
         }
@@ -704,7 +707,7 @@ fn literal_suffix_bad<'a>(alternatives: &'a [&'a str], suffix: BadSuffix) -> Bad
     Box::new(move |haystack: &str, pos: usize| -> Vec<usize> {
         let mut ends = Vec::new();
         for alt in alternatives {
-            if !haystack[pos..].starts_with(alt) {
+            if !ascii_starts_with_ignore_case(haystack, pos, alt) {
                 continue;
             }
             let head = pos + alt.len();
@@ -714,10 +717,10 @@ fn literal_suffix_bad<'a>(alternatives: &'a [&'a str], suffix: BadSuffix) -> Bad
             match suffix {
                 BadSuffix::YamlSuffix => {
                     if let Some(after_dot) = rest.strip_prefix('.') {
-                        if after_dot.starts_with("yaml") {
+                        if ascii_starts_with_ignore_case(after_dot, 0, "yaml") {
                             ends.push(head + 5);
                         }
-                        if after_dot.starts_with("yml") {
+                        if ascii_starts_with_ignore_case(after_dot, 0, "yml") {
                             ends.push(head + 4);
                         }
                     }
@@ -757,7 +760,7 @@ fn extension_run_bad<'a>(extensions: &'a [&'a str]) -> BadMatcher<'a> {
             if c == '.' {
                 let after_dot = i + 1;
                 for ext in extensions {
-                    if haystack[after_dot..].starts_with(ext) {
+                    if ascii_starts_with_ignore_case(haystack, after_dot, ext) {
                         ends.push(after_dot + ext.len());
                     }
                 }
@@ -779,11 +782,13 @@ fn secrets_run_bad<'a>(extensions: &'a [&'a str]) -> BadMatcher<'a> {
                 break;
             };
             for stem in ["secret", "credential"] {
-                if !haystack[i..].starts_with(stem) {
+                if !ascii_starts_with_ignore_case(haystack, i, stem) {
                     continue;
                 }
                 let mut after_stem = i + stem.len();
-                if haystack[after_stem..].starts_with('s') {
+                if let Some((_, plural)) = char_at(haystack, after_stem)
+                    && matches!(plural, 's' | 'S')
+                {
                     after_stem += 1;
                 }
                 if char_at(haystack, after_stem).map(|(_, c)| c) != Some('.') {
@@ -791,7 +796,7 @@ fn secrets_run_bad<'a>(extensions: &'a [&'a str]) -> BadMatcher<'a> {
                 }
                 let after_dot = after_stem + 1;
                 for ext in extensions {
-                    if haystack[after_dot..].starts_with(ext) {
+                    if ascii_starts_with_ignore_case(haystack, after_dot, ext) {
                         ends.push(after_dot + ext.len());
                     }
                 }
@@ -807,13 +812,21 @@ const CONFIG_EXTENSIONS: &[&str] = &["env", "yml", "yaml", "json", "toml", "ini"
 /// `(?:(?!config)[\w-])*config[\w-]*\.(?:env|yml|...)` (id 103). Only the first
 /// `config` occurrence in a `[\w-]` run is reachable: every later occurrence
 /// has a `config` start in its consumed prefix, which the per-char lookahead
-/// rejects.
+/// rejects. Literals fold ASCII case (builtin IGNORECASE).
 fn config_bad(haystack: &str, pos: usize) -> Vec<usize> {
     let run_end = walk_forward_while(haystack, pos, is_word_dash);
-    let Some(rel) = haystack[pos..run_end].find("config") else {
+    let mut config_start = None;
+    let mut cursor = pos;
+    while cursor + "config".len() <= run_end {
+        if ascii_starts_with_ignore_case(haystack, cursor, "config") {
+            config_start = Some(cursor);
+            break;
+        }
+        cursor = char_at(haystack, cursor).map_or(cursor + 1, |(i, c)| i + c.len_utf8());
+    }
+    let Some(config_start) = config_start else {
         return Vec::new();
     };
-    let config_start = pos + rel;
     let word_end = walk_forward_while(haystack, config_start + "config".len(), is_word_dash);
     if char_at(haystack, word_end).map(|(_, c)| c) != Some('.') {
         return Vec::new();
@@ -821,7 +834,7 @@ fn config_bad(haystack: &str, pos: usize) -> Vec<usize> {
     let after_dot = word_end + 1;
     let mut ends = Vec::new();
     for ext in CONFIG_EXTENSIONS {
-        if haystack[after_dot..].starts_with(ext) {
+        if ascii_starts_with_ignore_case(haystack, after_dot, ext) {
             ends.push(after_dot + ext.len());
         }
     }
@@ -831,7 +844,7 @@ fn config_bad(haystack: &str, pos: usize) -> Vec<usize> {
 /// `.env` family: BAD = `\.env(?:\.\w+)?` (longest first).
 fn env_bad(haystack: &str, pos: usize) -> Vec<usize> {
     let mut ends = Vec::new();
-    if haystack[pos..].starts_with(".env") {
+    if ascii_starts_with_ignore_case(haystack, pos, ".env") {
         let after = pos + 4;
         if char_at(haystack, after).map(|(_, c)| c) == Some('.') {
             let word_end = walk_forward_while(haystack, after + 1, py_is_word);
@@ -850,7 +863,7 @@ fn dot_alternative_bad<'a>(names: &'a [&'a str]) -> BadMatcher<'a> {
         let mut ends = Vec::new();
         if char_at(haystack, pos).map(|(_, c)| c) == Some('.') {
             for name in names {
-                if haystack[pos + 1..].starts_with(name) {
+                if ascii_starts_with_ignore_case(haystack, pos + 1, name) {
                     ends.push(pos + 1 + name.len());
                 }
             }
@@ -873,12 +886,12 @@ fn wp_admin_bad(haystack: &str, pos: usize) -> Vec<usize> {
     ];
     let mut ends = Vec::new();
     for head in HEADS {
-        if haystack[pos..].starts_with(head) {
+        if ascii_starts_with_ignore_case(haystack, pos, head) {
             let after = pos + head.len();
             // greedy `\.?` then `(?:php)?`
             let dotted = char_at(haystack, after).map(|(_, c)| c) == Some('.');
             let after_dot = if dotted { after + 1 } else { after };
-            if haystack[after_dot..].starts_with("php") {
+            if ascii_starts_with_ignore_case(haystack, after_dot, "php") {
                 ends.push(after_dot + 3);
             }
             if dotted {
@@ -1074,11 +1087,14 @@ pub fn lexicon_path_finditer(haystack: &str, shape: &str, require_lexicon: bool)
     }
 }
 
-/// `Object\.prototype\.[A-Za-z_$][\w$]*\s*=(?!=)` (id 139): the negative
-/// lookahead becomes a suffix check on the assignment operator.
+/// `Object\.prototype\.[A-Za-z_$][\w$]*\s*=(?!=)` (id 139).
+///
+/// The negative lookahead becomes a suffix check on the assignment operator.
+/// The row carries the reference's builtin IGNORECASE, so it compiles
+/// case-folded.
 #[must_use]
 pub fn proto_pollution_assign_finditer(haystack: &str) -> Vec<Candidate> {
-    let Ok(re) = PyRegex::compile(r"Object\.prototype\.[A-Za-z_$][\w$]*\s*=", false) else {
+    let Ok(re) = PyRegex::compile(r"Object\.prototype\.[A-Za-z_$][\w$]*\s*=", true) else {
         return Vec::new();
     };
     guarded_finditer(haystack, re.re(), |text, candidate| {
@@ -1437,6 +1453,8 @@ pub const HTML_EVENT_HANDLER_ATTRS: &[&str] = &[
     "onend",
 ];
 
+/// ASCII case-folded `starts_with` at a byte position: the reference's builtin
+/// `re.IGNORECASE` folding for the ASCII literals of the structural rows.
 fn ascii_starts_with_ignore_case(haystack: &str, pos: usize, needle: &str) -> bool {
     let bytes = haystack.as_bytes();
     let Some(window) = bytes.get(pos..pos + needle.len()) else {
