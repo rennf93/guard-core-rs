@@ -522,7 +522,7 @@ pub enum ViewFilter {
     All,
     /// processed view: raw-only and url-decoded-only patterns are excluded
     Processed,
-    /// raw signal-preserving view: only raw-view-only patterns
+    /// raw signal-preserving view: raw-view-only patterns plus the recon rows
     Raw,
     /// URL-decoded view: only url-decoded-view-only patterns
     UrlDecoded,
@@ -532,10 +532,15 @@ pub enum ViewFilter {
 pub fn is_excluded_from_view(source: &str, filter: ViewFilter) -> bool {
     let raw_only = table::DETECTION_RAW_VIEW_PATTERN_SOURCES.contains(source);
     let url_only = table::DETECTION_URL_DECODED_VIEW_PATTERN_SOURCES.contains(source);
+    // Recon rows also run on the raw view: the processed views fold LDAP hex
+    // escapes before the tables run, so separator-prefixed probes such as
+    // `\default` only survive there (upstream `DETECTION_RECON_RAW_VIEW_
+    // PATTERN_SOURCES`).
+    let recon_raw_only = table::DETECTION_RECON_RAW_VIEW_PATTERN_SOURCES.contains(source);
     match filter {
         ViewFilter::All => false,
         ViewFilter::Processed => raw_only || url_only,
-        ViewFilter::Raw => url_only || !raw_only,
+        ViewFilter::Raw => url_only || !(raw_only || recon_raw_only),
         ViewFilter::UrlDecoded => raw_only || !url_only,
     }
 }
