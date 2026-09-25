@@ -974,6 +974,31 @@ pub static PATTERN_DEFINITIONS: LazyLock<Vec<TableEntry>> = LazyLock::new(|| {
     ]
 });
 
+/// The optional leading-separator anchor the reference builds the recon
+/// whole-value rows from (`_TOP_LEVEL_PATH_PREFIX_RE`, i.e. `\A[/\\]?`).
+const TOP_LEVEL_PATH_PREFIX: &str = r"\A[/\\]?";
+
+/// Recon rows whose leading path separator is optional.
+///
+/// Outside a URL path these rows match bare words such as "default" or
+/// "README.md", not only probe paths. Derived from the table (recon category
+/// plus the anchor) with the reference's own rule
+/// (`_suspatterns_pattern_table.py`), so a new recon row built the same way
+/// is covered without a hand-maintained list. Other families (`cms_probing`,
+/// `sensitive_file`) also carry the anchor but are deliberately not gated,
+/// matching the reference scoping.
+pub static RECON_OPTIONAL_SEPARATOR_PATTERN_SOURCES: LazyLock<
+    std::collections::HashSet<&'static str>,
+> = LazyLock::new(|| {
+    PATTERN_DEFINITIONS
+        .iter()
+        .filter(|entry| {
+            entry.category == "recon" && entry.source.starts_with(TOP_LEVEL_PATH_PREFIX)
+        })
+        .map(|entry| entry.source)
+        .collect()
+});
+
 /// Patterns whose matches are suppressed inside binary-dense regions.
 pub static NOISE_PRONE_PATTERN_SOURCES: LazyLock<std::collections::HashSet<&'static str>> =
     LazyLock::new(|| {

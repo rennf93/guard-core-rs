@@ -2,6 +2,12 @@
 
 All notable changes to this project.
 
+## [Unreleased]
+
+### Fixed
+
+- Recon whole-value rows with an optional leading path separator no longer read bare query or body values such as `?system=SAP` or `README.md` as probe paths: on `query_param`/`request_body` (embedded JSON leaves included) those hits are rejected unless the value starts with `/` or `\`, while `url_path` and `unknown` are unchanged and separator-leading probes still fire. Gated rows are derived from the table (recon category plus the `\A[/\]?` anchor), matching guard-core #115 (upstream commit 08f79d67)
+
 ## [4.0.4] - 2026-09-24
 
 ### Added

@@ -454,7 +454,24 @@ pub const LEXICON_WP_PATH: &str = r"\A[^\n]*[/\\](?:(?:wp-(?:admin|login|content
 pub const LEXICON_PHPINFO_PATH: &str = r"\A[^\n]*[/\\](?:(?:phpinfo|info|test|php_info)\.php)(?:[/\\][\w.\-~%]{1,64})?(?:[/\\][\w.\-~%]{1,64})?(?:[/\\][\w.\-~%]{1,64})?\b";
 pub const LEXICON_HTACCESS_PATH: &str = r"\A[^\n]*[/\\](?:(?:\.htaccess|\.htpasswd|\.DS_Store|Thumbs\.db|\.npmrc|\.dockerenv|web\.config))(?:[/\\][\w.\-~%]{1,64})?(?:[/\\][\w.\-~%]{1,64})?(?:[/\\][\w.\-~%]{1,64})?\b";
 
-/// First accepted regex threat for one entry (validator + noise gate).
+/// `_RECON_BARE_PATH_CONTEXTS`: contexts where a recon whole-value hit is a
+/// probe regardless of a leading separator.
+const RECON_BARE_PATH_CONTEXTS: &[&str] = &["url_path", "unknown"];
+
+/// `_recon_path_value_is_probe`: accepted when the scanned value's base
+/// context (validator contexts keep the `:embedded_json` suffix, so split it
+/// off) is `url_path` or `unknown`, else the matched text must start with a
+/// path separator.
+#[must_use]
+fn recon_path_value_is_probe(matched: &str, validator_context: &str) -> bool {
+    let base = validator_context.split(':').next().unwrap_or("");
+    RECON_BARE_PATH_CONTEXTS.contains(&base)
+        || matched.starts_with('/')
+        || matched.starts_with('\\')
+}
+
+/// First accepted regex threat for one entry (validator + recon
+/// leading-separator + noise gates).
 #[must_use]
 pub fn find_first_threat(
     entry: &CompiledEntry,
@@ -463,8 +480,18 @@ pub fn find_first_threat(
     binary_prefix: Option<&[u32]>,
 ) -> Option<RegexThreat> {
     let noise_prone = table::NOISE_PRONE_PATTERN_SOURCES.contains(entry.entry.source);
+    let recon_optional_separator =
+        table::RECON_OPTIONAL_SEPARATOR_PATTERN_SOURCES.contains(entry.entry.source);
     for candidate in pattern_candidates(entry, haystack) {
         if !candidate_accepts(entry, haystack, candidate, context) {
+            continue;
+        }
+        // Upstream guard-core 08f79d67: rows with an optional leading
+        // separator must not read bare query or body words as probe paths;
+        // ordered after the candidate validators and before the binary-noise
+        // gate, mirroring `_build_regex_threat`.
+        if recon_optional_separator && !recon_path_value_is_probe(candidate.text(haystack), context)
+        {
             continue;
         }
         if noise_prone
