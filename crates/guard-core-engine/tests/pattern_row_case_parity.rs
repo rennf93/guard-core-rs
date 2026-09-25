@@ -110,10 +110,8 @@ fn structural_probe_rows_fold_case_like_the_reference() {
                 "uppercase probe {upper:?} in {context} is under-detected; \
                  the reference row is case-insensitive (lower fires, upper does not)"
             );
-            let lower_cats: Vec<&str> =
-                lower_hits.iter().map(|(c, _)| c.as_str()).collect();
-            let upper_cats: Vec<&str> =
-                upper_hits.iter().map(|(c, _)| c.as_str()).collect();
+            let lower_cats: Vec<&str> = lower_hits.iter().map(|(c, _)| c.as_str()).collect();
+            let upper_cats: Vec<&str> = upper_hits.iter().map(|(c, _)| c.as_str()).collect();
             assert_eq!(
                 lower_cats, upper_cats,
                 "case variants disagree on categories in {context}"
@@ -147,9 +145,18 @@ fn deserialization_magic_prefixes_stay_case_sensitive() {
     // The four `(?-i:...)` rows are the reference's only deliberate
     // case-sensitive rows; Rust must keep matching them exactly.
     for (fires, silent) in [
-        ("rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcA==", "ro0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcA=="),
-        ("AAEAAAD/////AQAAAAAAAAAMAgAA", "aaeaaad/////AQAAAAAAAAAMAgAA"),
-        ("gASVAAAAAAAAACMAAAAAAAAAAw==", "gAsVAAAAAAAAACMAAAAAAAAAAw=="),
+        (
+            "rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcA==",
+            "ro0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcA==",
+        ),
+        (
+            "AAEAAAD/////AQAAAAAAAAAMAgAA",
+            "aaeaaad/////AQAAAAAAAAAMAgAA",
+        ),
+        (
+            "gASVAAAAAAAAACMAAAAAAAAAAw==",
+            "gAsVAAAAAAAAACMAAAAAAAAAAw==",
+        ),
         ("BAhJGlNpZ25hdHVyZQ==\n", "bahJGlNpZ25hdHVyZQ==\n"),
     ] {
         assert!(
