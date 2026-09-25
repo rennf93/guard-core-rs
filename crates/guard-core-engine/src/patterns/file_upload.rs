@@ -35,10 +35,25 @@ const fn is_whitespace(c: char) -> bool {
     c.is_whitespace()
 }
 
+/// ASCII case-folded `starts_with` at a byte position: the reference's builtin
+/// `re.IGNORECASE` folding for the row's extension literals.
+fn ascii_starts_with_ignore_case(haystack: &str, pos: usize, needle: &str) -> bool {
+    let bytes = haystack.as_bytes();
+    let Some(window) = bytes.get(pos..pos + needle.len()) else {
+        return false;
+    };
+    window
+        .iter()
+        .zip(needle.bytes())
+        .all(|(a, b)| a.eq_ignore_ascii_case(&b))
+}
+
 /// Anchored-`pos` matcher for `\.(?:php\d*|<alternation>)(?![A-Za-z0-9])`.
 ///
 /// Returns the marker end. Branches are tried in reference order with the
 /// `php\d*` digit backtracking; the lookahead is a suffix check per branch.
+/// The row carries the reference's builtin IGNORECASE, so the extension
+/// literals fold ASCII case.
 #[must_use]
 pub fn dangerous_marker_at(body: &str, pos: usize, extensions: &[&str]) -> Option<usize> {
     if char_at(body, pos).map(|(_, c)| c) != Some('.') {
@@ -46,7 +61,7 @@ pub fn dangerous_marker_at(body: &str, pos: usize, extensions: &[&str]) -> Optio
     }
     let after_dot = pos + 1;
     // branch 1: php\d* with backtracking over the greedy digits
-    if body[after_dot..].starts_with("php") {
+    if ascii_starts_with_ignore_case(body, after_dot, "php") {
         let mut end = after_dot + 3;
         while char_at(body, end).is_some_and(|(_, c)| c.is_ascii_digit()) {
             end += 1;
@@ -63,7 +78,7 @@ pub fn dangerous_marker_at(body: &str, pos: usize, extensions: &[&str]) -> Optio
     }
     for ext in extensions {
         let end = after_dot + ext.len();
-        if body[after_dot..].starts_with(ext)
+        if ascii_starts_with_ignore_case(body, after_dot, ext)
             && char_at(body, end).is_none_or(|(_, c)| !c.is_ascii_alphanumeric())
         {
             return Some(end);
@@ -143,8 +158,10 @@ fn truncation_marker_at(body: &str, pos: usize, decoded: bool) -> bool {
         return body[pos..].starts_with('\u{0}') || body[pos..].starts_with(';');
     }
     body[pos..].starts_with("%00")
-        || body[pos..].starts_with(r"\u0000")
-        || body[pos..].starts_with(r"\x00")
+        // the `\u0000`/`\x00` escape texts fold case under the row's builtin
+        // IGNORECASE (`\U0000`, `\X00`)
+        || ascii_starts_with_ignore_case(body, pos, r"\u0000")
+        || ascii_starts_with_ignore_case(body, pos, r"\x00")
         || body[pos..].starts_with(r"\0")
         || body[pos..].starts_with('\u{0}')
         || body[pos..].starts_with(';')
