@@ -4,8 +4,10 @@
 //! View passes mirror the reference mixins:
 //! - processed view (`raw_view_only=False`): excludes raw-view-only and
 //!   URL-decoded-view-only patterns;
-//! - raw signal-preserving view (`raw_view_only=True`): only raw-view-only
-//!   patterns;
+//! - raw signal-preserving view (`raw_view_only=True`): raw-view-only
+//!   patterns plus the recon rows (the processed views fold LDAP hex
+//!   escapes such as `\default` before the tables run; duplicates against
+//!   the processed view are dropped on merge);
 //! - decoded-view path-traversal check (processed vs raw view counts);
 //! - URL-decoded view (`url_decoded_view_only=True`): only URL-decoded-view
 //!   patterns, content is the precomputed decoded view truncated safely;
@@ -113,6 +115,26 @@ fn scan_pass(
     )
 }
 
+/// Keep only the scan results whose (pattern, match) pair the earlier views
+/// have not already recorded (`_drop_view_duplicate_threats`).
+#[must_use]
+fn drop_view_duplicate_threats(
+    seen_threats: &[RegexThreat],
+    new_threats: Vec<RegexThreat>,
+) -> Vec<RegexThreat> {
+    let mut seen: std::collections::HashSet<(String, String)> = seen_threats
+        .iter()
+        .map(|threat| (threat.pattern.clone(), threat.match_text.clone()))
+        .collect();
+    let mut kept = Vec::new();
+    for threat in new_threats {
+        if seen.insert((threat.pattern.clone(), threat.match_text.clone())) {
+            kept.push(threat);
+        }
+    }
+    kept
+}
+
 fn semantic_threats(processed: &str, raw_content: &str, config: &DetectConfig) -> Vec<Threat> {
     if binary::looks_like_binary_content(raw_content) {
         return Vec::new();
@@ -192,12 +214,12 @@ pub fn detect(content: &str, request_context: &str, config: &DetectConfig) -> De
         config.preserve_attack_patterns,
         config.max_content_length,
     );
-    regex_threats.extend(scan_pass(
-        &raw_view,
-        ViewFilter::Raw,
-        normalized,
-        &validator_context,
-    ));
+    let raw_pass = scan_pass(&raw_view, ViewFilter::Raw, normalized, &validator_context);
+    // Threats and matched patterns are parallel lists in the reference (one
+    // append per match), so a raw-view sighting of a pattern over text the
+    // processed views already matched is the same evidence and must not
+    // inflate the threat score (`_drop_view_duplicate_threats`).
+    regex_threats.extend(drop_view_duplicate_threats(&regex_threats, raw_pass));
 
     // decoded-view path traversal (processed vs raw view shape counts)
     if let Some(threat) = patterns::decoded_view_traversal_threat(&processed, &raw_view) {

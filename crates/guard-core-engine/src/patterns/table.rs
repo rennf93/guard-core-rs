@@ -999,6 +999,23 @@ pub static RECON_OPTIONAL_SEPARATOR_PATTERN_SOURCES: LazyLock<
         .collect()
 });
 
+/// Recon rows additionally scanned against the signal-preserving raw view.
+///
+/// The processed views fold LDAP hex escapes (`\de` -> `Þ`) before the
+/// pattern tables run, so separator-prefixed probes such as `\default` or
+/// `\default.asp` never reach a recon row there. The raw view keeps them
+/// intact; the leading-separator gate still decides which matches are
+/// probes, so bare words stay innocent exactly as on the processed views.
+pub static DETECTION_RECON_RAW_VIEW_PATTERN_SOURCES: LazyLock<
+    std::collections::HashSet<&'static str>,
+> = LazyLock::new(|| {
+    PATTERN_DEFINITIONS
+        .iter()
+        .filter(|entry| entry.category == "recon")
+        .map(|entry| entry.source)
+        .collect()
+});
+
 /// Patterns whose matches are suppressed inside binary-dense regions.
 pub static NOISE_PRONE_PATTERN_SOURCES: LazyLock<std::collections::HashSet<&'static str>> =
     LazyLock::new(|| {
