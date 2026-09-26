@@ -211,7 +211,11 @@ impl core::fmt::Debug for RateLimiter {
     }
 }
 
-fn system_clock() -> f64 {
+/// The system wall clock, in seconds since the Unix epoch: the clock every
+/// production store runs on. Adapters and stage tests that build several
+/// stores over one clock share this constructor.
+#[must_use]
+pub fn system_clock() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0.0, |d| d.as_secs_f64())
@@ -235,6 +239,23 @@ impl RateLimiter {
     /// `ge=1`); nothing but `RateLimitConfig::default`-shaped values is
     /// substituted silently.
     pub fn new(config: RateLimitConfig) -> Result<Self, RateLimitConfigError> {
+        Self::with_config_and_clock(config, Arc::new(system_clock))
+    }
+
+    /// Validate the config and build the limiter over an injected clock: the
+    /// combined seam [`new`](Self::new) and [`with_clock`](Self::with_clock)
+    /// cover separately. Production builds use [`RateLimiter::new`]; adapters
+    /// and stage tests that drive window sliding with a fake clock under a
+    /// production-shaped config use this one.
+    ///
+    /// # Errors
+    ///
+    /// Same fail-closed behavior as [`RateLimiter::new`]: a zero `rate_limit`
+    /// or `rate_limit_window` is a [`RateLimitConfigError`].
+    pub fn with_config_and_clock(
+        config: RateLimitConfig,
+        clock: Clock,
+    ) -> Result<Self, RateLimitConfigError> {
         if config.rate_limit == 0 {
             return Err(RateLimitConfigError {
                 field: "rate_limit",
@@ -250,7 +271,7 @@ impl RateLimiter {
         Ok(Self {
             config,
             windows: new_window_store(),
-            clock: Arc::new(system_clock),
+            clock,
         })
     }
 

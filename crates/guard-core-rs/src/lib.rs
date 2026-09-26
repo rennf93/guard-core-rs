@@ -1,9 +1,10 @@
 //! Framework-agnostic application-layer API security engine.
 //!
 //! Rust port of [guard-core](https://github.com/rennf93/guard-core)'s
-//! detection engine. **Work in progress:** currently covers only the
-//! CPU-bound detection pipeline. Handlers, protocols, decorators, and
-//! I/O layers are not yet ported.
+//! detection engine. **Work in progress:** the CPU-bound detection pipeline
+//! is the core, and the first pipeline stage has landed: the rate-limit and
+//! dynamic-ban [`tower`] layer for Axum/tonic-shaped stacks. Handlers,
+//! protocols, decorators, and other I/O layers are not yet ported.
 //!
 //! Re-exports the detection engine modules:
 //!
@@ -14,6 +15,9 @@
 //!   whitespace collapsing, and attack-preserving truncation
 //! - [`semantic`] - token extraction, Shannon entropy, encoding layer detection, attack probability
 //!   scoring, obfuscation detection, code injection risk analysis, and aggregate threat scoring
+//! - [`tower`] - the rate-limit and dynamic IP ban pipeline stage as a
+//!   `tower::Layer` (429 throttled shape, 403 banned shapes, exempt-IP
+//!   handling, and the auto-ban feeds)
 //!
 //! # Usage
 //!
@@ -33,6 +37,8 @@
 //!
 //! assert!(score > 0.0);
 //! ```
+
+pub mod tower;
 
 pub use guard_core_engine::compiler;
 pub use guard_core_engine::detect;

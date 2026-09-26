@@ -1,0 +1,1317 @@
+//! The rate-limit and dynamic-ban pipeline stage for tower stacks: one
+//! `tower::Layer` that Axum, tonic, and any `tower::Service` consumer install
+//! around their inner service.
+//!
+//! This is the Rust family's first pipeline stage over the stateful modules
+//! (`guard_core_engine::rate_limit`, `guard_core_engine::ip_ban`), mirroring
+//! the reference engine's behavior for the two checks the stage owns
+//! (`guard_core/core/checks/implementations/rate_limit.py`, the ban check of
+//! `ip_security.py`, and the detection feed of `suspicious_activity.py`).
+//! One request pass decides:
+//!
+//! ```text
+//! no client IP:                                   pass through
+//! banned (no exemption skip):                     403 "IP address banned"
+//! over the rate limit (skipped for
+//!   whitelisted || exempt):                       429 "Too many requests"
+//!                                                 + `Retry-After`: window
+//! detection finding crosses a ban threshold
+//!   (skipped for whitelisted, never exempt):      403 "IP has been banned"
+//! everything else:                                pass through
+//! ```
+//!
+//! ## Reference contract, point by point
+//!
+//! - **Bans first**: the reference pipeline answers a banned IP from
+//!   `ip_security._check_banned_ip` before any later stage runs, with no
+//!   whitelist/exemption guard on that check, so the stage consults
+//!   [`IpBanManager::is_banned`] before anything else and answers the 403
+//!   banned shape.
+//! - **Exempt handling**: `RateLimitCheck.check` returns early for
+//!   `is_whitelisted || is_exempt`, so an exempt IP is never rate limited
+//!   (and never feeds the rate-limit auto-ban counter) while bans and
+//!   detection still apply. The skip state arrives the way the global IP
+//!   gate leaves it: an [`IpGateDecision`] request extension.
+//! - **Throttled shape**: the reference's
+//!   `ratelimit_handler.check_rate_limit` answers `429 "Too many requests"`
+//!   with `Retry-After: <window seconds>`; the window and limit semantics
+//!   are exactly [`RateLimiter::check`]'s (the global per-IP tier, the
+//!   reference pipeline's default).
+//! - **The rate-limit auto-ban feed**: a crossing feeds
+//!   [`IpBanManager::register_violations`] with the `rate_limit`
+//!   pseudo-category under reason `rate_limit_exceeded`
+//!   (`RateLimitCheck._record_rate_limit_autoban`) when
+//!   `enable_rate_limit_auto_ban` is on. The `429` still goes out: the
+//!   reference returns the limit response either way, and the ban answers
+//!   the next request.
+//! - **The detection feed**: a [`ThreatFinding`] request extension (what a
+//!   prior detection stage inserts) feeds the same engine with its
+//!   categories under reason `penetration_attempt`, exactly the reference's
+//!   `suspicious_activity` check: skipped for a whitelisted IP, never for an
+//!   exempt one, and the crossing request itself is answered with the 403
+//!   "IP has been banned" shape.
+//!
+//! ## Scope and honesty
+//!
+//! - The endpoint-rate-limit tier (`endpoint_rate_limits`, route decorators,
+//!   geo tiers) is not ported; the stage runs the global per-IP window only,
+//!   the reference pipeline's default tier.
+//! - The reference's `passive_mode` has no counterpart in the Rust config
+//!   surface yet: when the family ports it, the stage must answer nothing
+//!   and feed nothing under it.
+//! - A detection threat that does not cross a ban threshold passes through
+//!   here; the reference's `400 "Suspicious activity detected"` answer
+//!   belongs to the suspicious-activity stage, which has no tower
+//!   counterpart yet.
+//! - The default client IP extraction prefers the peer address a stack
+//!   inserts as a `SocketAddr` extension, then falls back to forwarded
+//!   headers; see [`default_extract_ip`] for the exact policy and the
+//!   spoofing caveat.
+//!
+//! # Example
+//!
+//! ```
+//! use guard_core_rs::tower::{
+//!     IpBanConfig, RateLimitConfig, RateLimitStage, RateLimitStageConfig,
+//! };
+//! use std::net::IpAddr;
+//! use std::str::FromStr;
+//!
+//! let stage = RateLimitStage::new(RateLimitStageConfig {
+//!     rate_limit: RateLimitConfig {
+//!         enable_rate_limiting: true,
+//!         rate_limit: 1,
+//!         ..RateLimitConfig::default()
+//!     },
+//!     ip_ban: IpBanConfig::default(),
+//! })
+//! .expect("valid stage config");
+//! let visitor = IpAddr::from_str("192.0.2.1").unwrap();
+//!
+//! // The first request passes, the second is throttled with the family's
+//! // 429 shape, and a request without a client IP passes untouched.
+//! assert!(stage.decide(Some(visitor), None, None).is_none());
+//! let throttled = stage.decide(Some(visitor), None, None).expect("throttled");
+//! assert_eq!(throttled.status, 429);
+//! assert_eq!(throttled.body, "Too many requests");
+//! assert_eq!(throttled.retry_after, Some(60));
+//! assert!(stage.decide(None, None, None).is_none());
+//! ```
+//!
+//! # Tower wiring
+//!
+//! The layer is an ordinary `tower::Layer`, so `ServiceBuilder`, Axum's
+//! `Router::layer`, and hand-rolled tower chains all accept it (shown for
+//! Axum, not compiled here):
+//!
+//! ```rust,ignore
+//! use axum::{routing::get, Router};
+//! use guard_core_rs::tower::{RateLimitStage, RateLimitStageConfig, RateLimitStageLayer};
+//! use tower::ServiceBuilder;
+//!
+//! let stage = RateLimitStage::new(RateLimitStageConfig::default()).expect("default config");
+//! let app = Router::new()
+//!     .route("/", get(|| async { "hello" }))
+//!     .layer(RateLimitStageLayer::new(stage));
+//! ```
+
+use std::fmt;
+use std::future::Future;
+use std::net::{IpAddr, SocketAddr};
+use std::pin::Pin;
+use std::str::FromStr;
+use std::sync::Arc;
+use std::task::{Context, Poll};
+
+use ::tower::Layer;
+use http::header::RETRY_AFTER;
+use http::{Extensions, HeaderMap, HeaderValue, Request, Response, StatusCode};
+
+pub use guard_core_engine::ip_ban::{
+    BanError, BanRecord, IpBanConfig, IpBanConfigError, IpBanManager, RATE_LIMIT_CATEGORY,
+    ResolvedBan, ThreatBanEntry, ViolationCounters,
+};
+pub use guard_core_engine::ip_gate::{IpGateDecision, IpGateError};
+pub use guard_core_engine::rate_limit::{
+    Clock, RateLimitConfig, RateLimitConfigError, RateLimiter, system_clock,
+};
+
+/// The banned answer body (`ip_security._check_banned_ip`'s default message).
+pub const BANNED_BODY: &str = "IP address banned";
+/// The crossing-ban answer body (`suspicious_activity`'s "banned" message,
+/// answered on the request whose finding crossed the threshold).
+pub const BAN_CROSSED_BODY: &str = "IP has been banned";
+/// The throttled answer body (`ratelimit_handler.check_rate_limit`'s default
+/// message).
+pub const THROTTLED_BODY: &str = "Too many requests";
+/// The reason the rate-limit crossing feeds the auto-ban engine under
+/// (`RateLimitCheck._record_rate_limit_autoban`).
+pub const RATE_LIMIT_BAN_REASON: &str = "rate_limit_exceeded";
+/// The reason a detection finding feeds the auto-ban engine under
+/// (`_try_threshold_ban`'s default reason).
+pub const PENETRATION_BAN_REASON: &str = "penetration_attempt";
+
+/// The detection result a prior pipeline stage may attach to the request
+/// extensions.
+///
+/// Adapters insert it with `request.extensions_mut().insert(..)`; the stage
+/// feeds its categories into the auto-ban engine exactly as the reference
+/// pipeline's `suspicious_activity` check does. Adapters translate their
+/// `guard_core_engine::detect::DetectVerdict` into this shape after running
+/// the engine's detection.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ThreatFinding {
+    /// `true` when the detection stage judged the request a threat.
+    pub is_threat: bool,
+    /// The detection categories the finding matched (`sqli`, `xss`, ...).
+    /// An empty list records the `uncategorized` pseudo-category, the
+    /// reference's `_increment_suspicious_counts` mapping.
+    pub categories: Vec<String>,
+    /// The human-readable trigger description (the reference
+    /// `trigger_info`), carried for observability.
+    pub trigger_info: String,
+}
+
+/// The stage's block answer, one of the three family shapes: the status, the
+/// default message body, and the `Retry-After` seconds for the throttled
+/// shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StageResponse {
+    /// The HTTP status (`403` for the banned shapes, `429` for throttling).
+    pub status: StatusCode,
+    /// The reference default message body.
+    pub body: &'static str,
+    /// `Retry-After` seconds (set only for the throttled shape).
+    pub retry_after: Option<u64>,
+}
+
+/// The stage knobs: the two stateful configs the reference pipeline reads.
+///
+/// They are exactly the surface the stateful modules shipped. The default
+/// value is the opt-in pair (both engines off, reference thresholds), so a
+/// stage built from [`RateLimitStageConfig::default`] passes everything
+/// through.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RateLimitStageConfig {
+    /// The rate-limiting knobs (`enable_rate_limiting`, `rate_limit`,
+    /// `rate_limit_window`, `enable_rate_limit_auto_ban`).
+    pub rate_limit: RateLimitConfig,
+    /// The auto-ban knobs (`enable_ip_banning`, `auto_ban_threshold`,
+    /// `auto_ban_duration`, `threat_ban_config`).
+    pub ip_ban: IpBanConfig,
+}
+
+/// An invalid stage config: the error [`RateLimitStage::new`] fails closed
+/// with, naming the part that rejected its input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RateLimitStageError {
+    /// The [`RateLimitConfig`] was rejected (zero limit or window).
+    RateLimit(RateLimitConfigError),
+    /// A trusted-proxy entry was neither an IP nor a CIDR range.
+    TrustedProxy(IpGateError),
+    /// The [`IpBanConfig`] was rejected (non-positive threshold/duration or
+    /// an unknown `threat_ban_config` category).
+    IpBan(IpBanConfigError),
+}
+
+impl fmt::Display for RateLimitStageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RateLimit(error) => write!(f, "invalid rate limit config: {error}"),
+            Self::TrustedProxy(error) => write!(f, "invalid trusted proxies: {error}"),
+            Self::IpBan(error) => write!(f, "invalid ip ban config: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for RateLimitStageError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::RateLimit(error) => Some(error),
+            Self::TrustedProxy(error) => Some(error),
+            Self::IpBan(error) => Some(error),
+        }
+    }
+}
+
+/// How the stage learns the request's client IP from the tower request
+/// pieces the layer has: the header map and the extensions.
+pub type ExtractIp = Arc<dyn Fn(&HeaderMap, &Extensions) -> Option<IpAddr> + Send + Sync>;
+
+/// The default client IP extraction.
+///
+/// The peer address a tower stack inserts as a `SocketAddr` request
+/// extension wins (the deployment-controlled, spoof-proof source); without
+/// one, the leftmost `x-forwarded-for` entry, then `x-real-ip`. The header
+/// fallbacks exist for stacks that cannot carry the peer address, and they
+/// trust the inbound headers: deployments behind a proxy that needs a
+/// different forwarded policy install their own extractor with
+/// [`RateLimitStageBuilder::ip_extractor`].
+#[must_use]
+pub fn default_extract_ip(headers: &HeaderMap, extensions: &Extensions) -> Option<IpAddr> {
+    if let Some(peer) = extensions.get::<SocketAddr>() {
+        return Some(peer.ip());
+    }
+    if let Some(entry) = headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .and_then(parse_ip_entry)
+    {
+        return Some(entry);
+    }
+    headers
+        .get("x-real-ip")
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_ip_entry)
+}
+
+/// Parse one address entry: a bare IP, or an `ip:port` / `[v6]:port` socket
+/// literal whose address part is taken.
+fn parse_ip_entry(entry: &str) -> Option<IpAddr> {
+    let entry = entry.trim();
+    IpAddr::from_str(entry)
+        .or_else(|_| SocketAddr::from_str(entry).map(|socket| socket.ip()))
+        .ok()
+}
+
+/// The rate-limit and dynamic-ban stage over one shared set of stores.
+///
+/// Build it once at startup with [`RateLimitStage::new`] or
+/// [`RateLimitStage::builder`] (both fail closed on an invalid config) and
+/// install it with [`RateLimitStageLayer`]. The stage is cheaply clonable:
+/// the clone shares the window, ban, and counter stores (the references'
+/// singleton semantics), so adapters can keep out-of-band handles (admin
+/// unban endpoints, stats) alongside the installed layer.
+#[derive(Clone)]
+pub struct RateLimitStage {
+    config: RateLimitStageConfig,
+    limiter: RateLimiter,
+    bans: IpBanManager,
+    counters: ViolationCounters,
+    extract_ip: ExtractIp,
+}
+
+impl fmt::Debug for RateLimitStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RateLimitStage")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
+}
+
+impl RateLimitStage {
+    /// Build and validate the stage with the default IP extraction and the
+    /// system clock. See [`RateLimitStage::builder`] for the optional seams
+    /// (injected clock, trusted proxies, custom extraction).
+    ///
+    /// # Errors
+    ///
+    /// [`RateLimitStageError`] naming the config part that was rejected.
+    pub fn new(config: RateLimitStageConfig) -> Result<Self, RateLimitStageError> {
+        Self::builder(config).build()
+    }
+
+    /// Open the fail-closed builder: the clock, the trusted proxies, and the
+    /// IP extraction are all optional seams over [`RateLimitStage::new`]'s
+    /// defaults.
+    pub const fn builder(config: RateLimitStageConfig) -> RateLimitStageBuilder {
+        RateLimitStageBuilder {
+            config,
+            clock: None,
+            trusted_proxies: Vec::new(),
+            extract_ip: None,
+        }
+    }
+
+    /// The validated config the stage decides under.
+    #[must_use]
+    pub const fn config(&self) -> &RateLimitStageConfig {
+        &self.config
+    }
+
+    /// The rate limiter the stage drives (the global per-IP tier). A shared
+    /// handle: clones see the same sliding windows.
+    #[must_use]
+    pub const fn limiter(&self) -> &RateLimiter {
+        &self.limiter
+    }
+
+    /// The ban store the stage consults. A shared handle: `ban_ip` and
+    /// `unban` through it are visible to the installed layer immediately.
+    #[must_use]
+    pub const fn bans(&self) -> &IpBanManager {
+        &self.bans
+    }
+
+    /// The violation counters the auto-ban feed accumulates. A shared
+    /// handle, for tests and observability.
+    #[must_use]
+    pub const fn counters(&self) -> &ViolationCounters {
+        &self.counters
+    }
+
+    /// One pass of the stage over the pieces a tower request carries.
+    ///
+    /// `ip` is the extracted client identity (`None` passes through, the
+    /// reference skips the check without a client IP), `gate` the global IP
+    /// gate's skip state when the stack provides one, and `finding` the
+    /// detection result when the pipeline provides one. `None` means the
+    /// request passes through to the inner service; `Some` is the block
+    /// answer the layer renders.
+    ///
+    /// The order is the reference pipeline's: bans first (no exemption
+    /// skip), then the rate limit (skipped for `is_whitelisted ||
+    /// is_exempt`), then the detection feed (skipped for `is_whitelisted`
+    /// only, since a throttled request never reaches the suspicious-activity
+    /// stage in the reference).
+    pub fn decide(
+        &self,
+        ip: Option<IpAddr>,
+        gate: Option<IpGateDecision>,
+        finding: Option<&ThreatFinding>,
+    ) -> Option<StageResponse> {
+        let ip = ip?;
+
+        if self.bans.is_banned(ip) {
+            return Some(StageResponse {
+                status: StatusCode::FORBIDDEN,
+                body: BANNED_BODY,
+                retry_after: None,
+            });
+        }
+
+        let whitelisted = gate.is_some_and(|gate| gate.is_whitelisted);
+        let skip_rate_limit = whitelisted || gate.is_some_and(|gate| gate.is_exempt);
+
+        if !skip_rate_limit {
+            let decision = self.limiter.check(ip, None);
+            if !decision.allowed {
+                // The crossing feeds the auto-ban engine with the
+                // `rate_limit` pseudo-category; the 429 still goes out (the
+                // reference returns the limit response either way) and the
+                // ban answers the next request.
+                if self.config.rate_limit.enable_rate_limit_auto_ban {
+                    // Whether the ban resolved or was refused does not
+                    // change this response: the 429 goes out either way and
+                    // the ban (if any) answers the next request.
+                    let _ = self.bans.register_violations(
+                        &self.counters,
+                        ip,
+                        &[RATE_LIMIT_CATEGORY],
+                        &self.config.ip_ban,
+                        RATE_LIMIT_BAN_REASON,
+                    );
+                }
+                return Some(StageResponse {
+                    status: StatusCode::TOO_MANY_REQUESTS,
+                    body: THROTTLED_BODY,
+                    retry_after: Some(decision.retry_after()),
+                });
+            }
+        }
+
+        if let Some(finding) = finding.filter(|finding| finding.is_threat && !whitelisted) {
+            let categories: Vec<&str> = finding.categories.iter().map(String::as_str).collect();
+            if self
+                .bans
+                .register_violations(
+                    &self.counters,
+                    ip,
+                    &categories,
+                    &self.config.ip_ban,
+                    PENETRATION_BAN_REASON,
+                )
+                .is_some()
+            {
+                return Some(StageResponse {
+                    status: StatusCode::FORBIDDEN,
+                    body: BAN_CROSSED_BODY,
+                    retry_after: None,
+                });
+            }
+        }
+
+        None
+    }
+}
+
+/// The fail-closed builder for [`RateLimitStage`]: every seam is optional
+/// and [`RateLimitStageBuilder::build`] validates the whole config.
+#[must_use]
+pub struct RateLimitStageBuilder {
+    config: RateLimitStageConfig,
+    clock: Option<Clock>,
+    trusted_proxies: Vec<String>,
+    extract_ip: Option<ExtractIp>,
+}
+
+impl RateLimitStageBuilder {
+    /// Run the stage over an injected wall clock: the seam deterministic
+    /// window-sliding and ban-expiry coverage uses instead of sleeping.
+    pub fn clock(mut self, clock: Clock) -> Self {
+        self.clock = Some(clock);
+        self
+    }
+
+    /// Trust these proxy networks for the ban engine's self-DoS refusal (a
+    /// bare IP or a CIDR range per entry, the ban store's own parsing).
+    pub fn trusted_proxies<I>(mut self, entries: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Into<String>,
+    {
+        self.trusted_proxies = entries.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Replace the default client IP extraction ([`default_extract_ip`])
+    /// with a deployment-specific policy.
+    pub fn ip_extractor<F>(mut self, extractor: F) -> Self
+    where
+        F: Fn(&HeaderMap, &Extensions) -> Option<IpAddr> + Send + Sync + 'static,
+    {
+        self.extract_ip = Some(Arc::new(extractor));
+        self
+    }
+
+    /// Validate everything and build the stage.
+    ///
+    /// # Errors
+    ///
+    /// [`RateLimitStageError`] naming the part that was rejected: the rate
+    /// limit config (zero limit or window), a trusted-proxy entry that is
+    /// neither an IP nor a CIDR range, or the ban config (non-positive
+    /// threshold/duration, unknown `threat_ban_config` category).
+    pub fn build(self) -> Result<RateLimitStage, RateLimitStageError> {
+        self.config
+            .ip_ban
+            .validate()
+            .map_err(RateLimitStageError::IpBan)?;
+        let clock = self.clock.unwrap_or_else(|| Arc::new(system_clock));
+        let limiter =
+            RateLimiter::with_config_and_clock(self.config.rate_limit.clone(), Arc::clone(&clock))
+                .map_err(RateLimitStageError::RateLimit)?;
+        let bans = IpBanManager::with_trusted_proxies_and_clock(self.trusted_proxies, clock)
+            .map_err(RateLimitStageError::TrustedProxy)?;
+        Ok(RateLimitStage {
+            config: self.config,
+            limiter,
+            bans,
+            counters: ViolationCounters::new(),
+            extract_ip: self
+                .extract_ip
+                .unwrap_or_else(|| Arc::new(default_extract_ip)),
+        })
+    }
+}
+
+/// The `tower::Layer` carrying [`RateLimitStage`].
+///
+/// Wrap any `Service<http::Request<B>>` whose responses are
+/// `http::Response<ResBody>` with `ResBody: From<&'static str>` (Axum's
+/// body, `http_body_util::Full<Bytes>`, and the plain `&'static str` body
+/// all qualify) and the stage answers the family's block shapes itself.
+#[derive(Clone)]
+pub struct RateLimitStageLayer {
+    stage: RateLimitStage,
+}
+
+impl RateLimitStageLayer {
+    /// Carry `stage` into every service this layer wraps.
+    #[must_use]
+    pub const fn new(stage: RateLimitStage) -> Self {
+        Self { stage }
+    }
+}
+
+impl fmt::Debug for RateLimitStageLayer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RateLimitStageLayer")
+            .field("stage", &self.stage)
+            .finish()
+    }
+}
+
+impl<S> Layer<S> for RateLimitStageLayer {
+    type Service = RateLimitStageService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        RateLimitStageService {
+            inner,
+            stage: self.stage.clone(),
+        }
+    }
+}
+
+/// The stage as a `tower::Service` around the inner service it wrapped.
+#[derive(Clone)]
+pub struct RateLimitStageService<S> {
+    inner: S,
+    stage: RateLimitStage,
+}
+
+impl<S, B, ResBody> ::tower::Service<Request<B>> for RateLimitStageService<S>
+where
+    S: ::tower::Service<Request<B>, Response = Response<ResBody>>,
+    S::Future: Send + 'static,
+    ResBody: From<&'static str> + Send + 'static,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<S::Response, S::Error>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), S::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: Request<B>) -> Self::Future {
+        let ip = (self.stage.extract_ip)(request.headers(), request.extensions());
+        let gate = request.extensions().get::<IpGateDecision>().copied();
+        let finding = request.extensions().get::<ThreatFinding>();
+        if let Some(answer) = self.stage.decide(ip, gate, finding) {
+            let response = render(answer);
+            return Box::pin(async move { Ok(response) });
+        }
+        let future = self.inner.call(request);
+        Box::pin(future)
+    }
+}
+
+/// Render the stage's block answer into the wrapped service's response body
+/// type: status, default message body, and the `Retry-After` header for the
+/// throttled shape.
+fn render<ResBody: From<&'static str>>(answer: StageResponse) -> Response<ResBody> {
+    let mut response = Response::new(ResBody::from(answer.body));
+    *response.status_mut() = answer.status;
+    if let Some(value) = answer
+        .retry_after
+        .and_then(|after| HeaderValue::from_str(&after.to_string()).ok())
+    {
+        response.headers_mut().insert(RETRY_AFTER, value);
+    }
+    response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::convert::Infallible;
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+
+    use ::tower::{Service, ServiceBuilder};
+
+    /// A fake clock: f64 unix seconds starting at `1_000.0`, advanced by
+    /// `advance`.
+    #[derive(Clone, Default)]
+    struct FakeClock(Arc<AtomicU64>);
+
+    impl FakeClock {
+        fn advance(&self, seconds: u64) {
+            self.0.fetch_add(seconds, Ordering::Relaxed);
+        }
+
+        fn clock(&self) -> Clock {
+            let state = self.0.clone();
+            #[allow(clippy::cast_precision_loss)]
+            Arc::new(move || state.load(Ordering::Relaxed) as f64)
+        }
+    }
+
+    fn ip(text: &str) -> IpAddr {
+        IpAddr::from_str(text).expect("test address")
+    }
+
+    fn stage_with(config: RateLimitStageConfig, clock: Clock) -> RateLimitStage {
+        RateLimitStage::builder(config)
+            .clock(clock)
+            .build()
+            .expect("valid stage config")
+    }
+
+    fn throttling_stage(rate_limit: u32, clock: Clock) -> RateLimitStage {
+        stage_with(
+            RateLimitStageConfig {
+                rate_limit: RateLimitConfig {
+                    enable_rate_limiting: true,
+                    rate_limit,
+                    ..RateLimitConfig::default()
+                },
+                ip_ban: IpBanConfig::default(),
+            },
+            clock,
+        )
+    }
+
+    fn assert_banned_shape(answer: StageResponse) {
+        assert_eq!(answer.status, StatusCode::FORBIDDEN);
+        assert_eq!(answer.body, BANNED_BODY);
+        assert_eq!(answer.retry_after, None);
+    }
+
+    fn assert_crossing_ban_shape(answer: StageResponse) {
+        assert_eq!(answer.status, StatusCode::FORBIDDEN);
+        assert_eq!(answer.body, BAN_CROSSED_BODY);
+        assert_eq!(answer.retry_after, None);
+    }
+
+    #[test]
+    fn default_stage_passes_everything_through() {
+        let stage = RateLimitStage::new(RateLimitStageConfig::default()).expect("default config");
+        for n in 0..100 {
+            assert!(
+                stage
+                    .decide(Some(ip(&format!("192.0.2.{n}"))), None, None)
+                    .is_none(),
+                "request {n} must pass"
+            );
+        }
+        assert_eq!(stage.limiter().tracked_windows(), 0, "nothing recorded");
+        assert_eq!(stage.counters().tracked_ips(), 0, "nothing counted");
+    }
+
+    #[test]
+    fn throttled_shape_mirrors_the_reference() {
+        let stage = throttling_stage(2, Arc::new(system_clock));
+        let visitor = ip("192.0.2.1");
+        assert!(stage.decide(Some(visitor), None, None).is_none());
+        assert!(stage.decide(Some(visitor), None, None).is_none());
+        let answer = stage.decide(Some(visitor), None, None).expect("throttled");
+        assert_eq!(answer.status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(answer.body, THROTTLED_BODY);
+        assert_eq!(answer.retry_after, Some(60), "Retry-After is the window");
+    }
+
+    #[test]
+    fn window_slide_restores_the_budget_through_the_stage() {
+        let fake = FakeClock::default();
+        let stage = throttling_stage(2, fake.clock());
+        let visitor = ip("192.0.2.1");
+        assert!(stage.decide(Some(visitor), None, None).is_none());
+        assert!(stage.decide(Some(visitor), None, None).is_none());
+        assert!(stage.decide(Some(visitor), None, None).is_some());
+
+        // Half the window later the crossing request is still remembered.
+        fake.advance(30);
+        assert!(stage.decide(Some(visitor), None, None).is_some());
+        // Past the window the budget is whole again.
+        fake.advance(31);
+        assert!(stage.decide(Some(visitor), None, None).is_none());
+    }
+
+    #[test]
+    fn exempt_ip_skips_rate_limiting_but_bans_still_answer() {
+        let stage = throttling_stage(2, Arc::new(system_clock));
+        let exempt = ip("192.0.2.7");
+        let gate = IpGateDecision {
+            is_whitelisted: false,
+            is_exempt: true,
+        };
+        for _ in 0..50 {
+            assert!(
+                stage.decide(Some(exempt), Some(gate), None).is_none(),
+                "an exempt IP is never rate limited"
+            );
+        }
+        assert_eq!(
+            stage.limiter().tracked_windows(),
+            0,
+            "the exempt window was never recorded"
+        );
+
+        // Bans still apply to an exempt IP: no exemption skip on the ban
+        // check.
+        stage.bans().ban_ip(exempt, 60, "x").expect("ban");
+        assert_banned_shape(
+            stage
+                .decide(Some(exempt), Some(gate), None)
+                .expect("banned"),
+        );
+    }
+
+    #[test]
+    fn whitelisted_ip_skips_rate_limiting() {
+        let stage = throttling_stage(1, Arc::new(system_clock));
+        let whitelisted = ip("192.0.2.8");
+        let gate = IpGateDecision {
+            is_whitelisted: true,
+            is_exempt: false,
+        };
+        for _ in 0..10 {
+            assert!(stage.decide(Some(whitelisted), Some(gate), None).is_none());
+        }
+        assert_eq!(stage.limiter().tracked_windows(), 0);
+    }
+
+    #[test]
+    fn ban_check_beats_throttle_and_exemption() {
+        let stage = throttling_stage(1, Arc::new(system_clock));
+        let attacker = ip("192.0.2.9");
+        let gate = IpGateDecision {
+            is_whitelisted: false,
+            is_exempt: true,
+        };
+        stage.bans().ban_ip(attacker, 60, "x").expect("ban");
+        // Over the limit and exempt, yet the banned shape wins: bans are
+        // consulted first.
+        assert_banned_shape(
+            stage
+                .decide(Some(attacker), Some(gate), None)
+                .expect("banned"),
+        );
+    }
+
+    #[test]
+    fn missing_ip_passes_through_without_side_effects() {
+        let stage = throttling_stage(1, Arc::new(system_clock));
+        let finding = ThreatFinding {
+            is_threat: true,
+            categories: vec!["sqli".to_owned()],
+            trigger_info: "probe".to_owned(),
+        };
+        for _ in 0..10 {
+            assert!(
+                stage.decide(None, None, Some(&finding)).is_none(),
+                "no client identity, no stage decision"
+            );
+        }
+        assert_eq!(stage.limiter().tracked_windows(), 0);
+        assert_eq!(stage.counters().tracked_ips(), 0);
+    }
+
+    #[test]
+    fn auto_ban_feed_fires_on_the_crossing_and_the_next_request_is_banned() {
+        let fake = FakeClock::default();
+        let stage = stage_with(
+            RateLimitStageConfig {
+                rate_limit: RateLimitConfig {
+                    enable_rate_limiting: true,
+                    rate_limit: 1,
+                    enable_rate_limit_auto_ban: true,
+                    ..RateLimitConfig::default()
+                },
+                ip_ban: IpBanConfig {
+                    enable_ip_banning: true,
+                    auto_ban_threshold: 1,
+                    ..IpBanConfig::default()
+                },
+            },
+            fake.clock(),
+        );
+        let attacker = ip("192.0.2.9");
+
+        // The crossing request gets the 429 (the reference answers the limit
+        // response either way) while the ban fires underneath.
+        assert!(stage.decide(Some(attacker), None, None).is_none());
+        let answer = stage.decide(Some(attacker), None, None).expect("throttled");
+        assert_eq!(answer.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(stage.bans().is_banned(attacker));
+        assert_eq!(
+            stage.bans().ban_record(attacker).expect("record").reason,
+            RATE_LIMIT_BAN_REASON
+        );
+        assert_eq!(
+            stage.counters().snapshot(attacker).get("rate_limit"),
+            Some(&1),
+            "the crossing counted one rate_limit violation"
+        );
+
+        // The next request meets the ban check first: the banned shape.
+        assert_banned_shape(stage.decide(Some(attacker), None, None).expect("banned"));
+    }
+
+    #[test]
+    fn auto_ban_feed_is_gated_on_the_toggle_but_counts_when_banning_is_off() {
+        let attacker = ip("192.0.2.9");
+
+        // The toggle off: no violations recorded on a crossing.
+        let stage = throttling_stage(1, Arc::new(system_clock));
+        assert!(stage.decide(Some(attacker), None, None).is_none());
+        assert_eq!(
+            stage.counters().tracked_ips(),
+            0,
+            "enable_rate_limit_auto_ban gates the feed entirely"
+        );
+
+        // The toggle on with banning off: the crossing counts (enabling
+        // banning later starts from observed history) but nobody is banned.
+        let fake = FakeClock::default();
+        let stage = stage_with(
+            RateLimitStageConfig {
+                rate_limit: RateLimitConfig {
+                    enable_rate_limiting: true,
+                    rate_limit: 1,
+                    enable_rate_limit_auto_ban: true,
+                    ..RateLimitConfig::default()
+                },
+                ip_ban: IpBanConfig::default(),
+            },
+            fake.clock(),
+        );
+        assert!(stage.decide(Some(attacker), None, None).is_none());
+        assert!(
+            stage.decide(Some(attacker), None, None).is_some(),
+            "still throttled, not banned"
+        );
+        assert_eq!(
+            stage.counters().snapshot(attacker).get("rate_limit"),
+            Some(&1)
+        );
+        assert!(!stage.bans().is_banned(attacker), "banning is off");
+    }
+
+    #[test]
+    fn rate_limit_category_entry_overrides_the_flat_threshold() {
+        let fake = FakeClock::default();
+        let stage = stage_with(
+            RateLimitStageConfig {
+                rate_limit: RateLimitConfig {
+                    enable_rate_limiting: true,
+                    rate_limit: 1,
+                    enable_rate_limit_auto_ban: true,
+                    ..RateLimitConfig::default()
+                },
+                ip_ban: IpBanConfig {
+                    enable_ip_banning: true,
+                    auto_ban_threshold: 100,
+                    auto_ban_duration: 3600,
+                    threat_ban_config: std::iter::once((
+                        "rate_limit".to_owned(),
+                        ThreatBanEntry {
+                            threshold: 2,
+                            duration: 30,
+                        },
+                    ))
+                    .collect(),
+                },
+            },
+            fake.clock(),
+        );
+        let attacker = ip("192.0.2.9");
+
+        // Request 1 passes (the limit is 1): no crossing, no violation.
+        assert!(stage.decide(Some(attacker), None, None).is_none());
+        assert_eq!(stage.counters().snapshot(attacker).get("rate_limit"), None);
+
+        // First crossing: one violation, below the entry's threshold of 2.
+        // The 429 still goes out.
+        let first_crossing = stage.decide(Some(attacker), None, None);
+        assert_eq!(
+            first_crossing.expect("429").status,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert!(!stage.bans().is_banned(attacker));
+        assert_eq!(
+            stage.counters().snapshot(attacker).get("rate_limit"),
+            Some(&1)
+        );
+
+        // Second crossing: the entry fires (reason "<reason>:<category>").
+        assert!(stage.decide(Some(attacker), None, None).is_some());
+        assert!(stage.bans().is_banned(attacker));
+        assert_eq!(
+            stage.bans().ban_record(attacker).expect("record").reason,
+            format!("{RATE_LIMIT_BAN_REASON}:rate_limit")
+        );
+
+        // The next request meets the banned shape, not the throttled one.
+        assert_banned_shape(stage.decide(Some(attacker), None, None).expect("banned"));
+    }
+
+    #[test]
+    fn detection_finding_records_and_bans_at_the_threshold() {
+        let fake = FakeClock::default();
+        let stage = stage_with(
+            RateLimitStageConfig {
+                rate_limit: RateLimitConfig::default(),
+                ip_ban: IpBanConfig {
+                    enable_ip_banning: true,
+                    auto_ban_threshold: 100,
+                    auto_ban_duration: 3600,
+                    threat_ban_config: std::iter::once((
+                        "sqli".to_owned(),
+                        ThreatBanEntry {
+                            threshold: 2,
+                            duration: 60,
+                        },
+                    ))
+                    .collect(),
+                },
+            },
+            fake.clock(),
+        );
+        let attacker = ip("192.0.2.9");
+        let finding = ThreatFinding {
+            is_threat: true,
+            categories: vec!["sqli".to_owned()],
+            trigger_info: "union select".to_owned(),
+        };
+
+        // Below the threshold the request passes through: the 400
+        // "Suspicious activity detected" answer belongs to a later stage
+        // this port does not ship yet.
+        assert!(stage.decide(Some(attacker), None, Some(&finding)).is_none());
+        assert_eq!(stage.counters().snapshot(attacker).get("sqli"), Some(&1));
+
+        // The crossing request itself is answered with the crossing-ban
+        // shape.
+        assert_crossing_ban_shape(
+            stage
+                .decide(Some(attacker), None, Some(&finding))
+                .expect("banned on the crossing"),
+        );
+        assert_eq!(
+            stage.bans().ban_record(attacker).expect("record").reason,
+            format!("{PENETRATION_BAN_REASON}:sqli")
+        );
+
+        // Every later request meets the ban check first.
+        assert_banned_shape(stage.decide(Some(attacker), None, None).expect("banned"));
+    }
+
+    #[test]
+    fn benign_finding_records_nothing_and_passes_through() {
+        let stage = RateLimitStage::new(RateLimitStageConfig {
+            rate_limit: RateLimitConfig::default(),
+            ip_ban: IpBanConfig {
+                enable_ip_banning: true,
+                ..IpBanConfig::default()
+            },
+        })
+        .expect("valid config");
+        let visitor = ip("192.0.2.3");
+        let finding = ThreatFinding {
+            is_threat: false,
+            categories: vec!["sqli".to_owned()],
+            trigger_info: "benign".to_owned(),
+        };
+        assert!(stage.decide(Some(visitor), None, Some(&finding)).is_none());
+        assert_eq!(stage.counters().tracked_ips(), 0);
+    }
+
+    #[test]
+    fn whitelisted_finding_is_not_recorded_but_exempt_finding_is() {
+        let stage = RateLimitStage::new(RateLimitStageConfig::default()).expect("valid config");
+        let whitelisted = ip("192.0.2.4");
+        let exempt = ip("192.0.2.5");
+        let whitelist_gate = IpGateDecision {
+            is_whitelisted: true,
+            is_exempt: false,
+        };
+        let exempt_gate = IpGateDecision {
+            is_whitelisted: false,
+            is_exempt: true,
+        };
+        let finding = ThreatFinding {
+            is_threat: true,
+            categories: vec!["xss".to_owned()],
+            trigger_info: "probe".to_owned(),
+        };
+
+        // A whitelisted IP skips detection entirely (the reference's
+        // `suspicious_activity` guard).
+        assert!(
+            stage
+                .decide(Some(whitelisted), Some(whitelist_gate), Some(&finding))
+                .is_none()
+        );
+        assert_eq!(stage.counters().tracked_ips(), 0);
+
+        // An exempt IP is never skipped by detection: the finding counts.
+        assert!(
+            stage
+                .decide(Some(exempt), Some(exempt_gate), Some(&finding))
+                .is_none()
+        );
+        assert_eq!(stage.counters().snapshot(exempt).get("xss"), Some(&1));
+    }
+
+    #[test]
+    fn ipv4_mapped_ip_shares_the_ipv4_bucket() {
+        let stage = throttling_stage(1, Arc::new(system_clock));
+        assert!(
+            stage
+                .decide(Some(ip("::ffff:192.0.2.6")), None, None)
+                .is_none()
+        );
+        let answer = stage.decide(Some(ip("192.0.2.6")), None, None);
+        assert_eq!(
+            answer.expect("throttled").status,
+            StatusCode::TOO_MANY_REQUESTS
+        );
+    }
+
+    #[test]
+    fn builder_fails_closed_on_every_rejected_part() {
+        let error = RateLimitStage::new(RateLimitStageConfig {
+            rate_limit: RateLimitConfig {
+                rate_limit: 0,
+                ..RateLimitConfig::default()
+            },
+            ip_ban: IpBanConfig::default(),
+        })
+        .unwrap_err();
+        assert_eq!(
+            error,
+            RateLimitStageError::RateLimit(RateLimitConfigError {
+                field: "rate_limit",
+                reason: "must be at least 1 request per window",
+            })
+        );
+        assert!(error.to_string().starts_with("invalid rate limit config:"));
+        assert!(std::error::Error::source(&error).is_some());
+
+        // A struct-literal ban config skips its own constructor validation,
+        // so the stage re-validates and fails closed.
+        let error = RateLimitStage::new(RateLimitStageConfig {
+            rate_limit: RateLimitConfig::default(),
+            ip_ban: IpBanConfig {
+                enable_ip_banning: true,
+                auto_ban_threshold: 0,
+                ..IpBanConfig::default()
+            },
+        })
+        .unwrap_err();
+        assert_eq!(
+            error,
+            RateLimitStageError::IpBan(IpBanConfigError::NonPositive {
+                field: "auto_ban_threshold",
+            })
+        );
+
+        let error = RateLimitStage::builder(RateLimitStageConfig::default())
+            .trusted_proxies(["not-an-ip"])
+            .build()
+            .unwrap_err();
+        assert_eq!(
+            error,
+            RateLimitStageError::TrustedProxy(IpGateError {
+                list: "trusted_proxies",
+                entry: "not-an-ip".to_owned(),
+            })
+        );
+        assert_eq!(
+            error.to_string(),
+            "invalid trusted proxies: invalid trusted_proxies entry 'not-an-ip': \
+             expected an IP address or CIDR range"
+        );
+    }
+
+    #[test]
+    fn shared_store_handles_are_live_for_the_layer() {
+        let stage = throttling_stage(10, Arc::new(system_clock));
+        let visitor = ip("192.0.2.10");
+        // An out-of-band ban through the shared handle is visible to the
+        // stage immediately (the admin-unban-endpoint shape).
+        stage.bans().ban_ip(visitor, 60, "admin").expect("ban");
+        assert_banned_shape(stage.decide(Some(visitor), None, None).expect("banned"));
+        stage.bans().unban(visitor);
+        assert!(stage.decide(Some(visitor), None, None).is_none());
+    }
+
+    #[test]
+    fn default_extract_ip_prefers_the_peer_extension() {
+        let mut request = Request::builder()
+            .header("x-forwarded-for", "junk")
+            .body(())
+            .expect("request");
+        request
+            .extensions_mut()
+            .insert(SocketAddr::from_str("203.0.113.9:8443").expect("socket"));
+        assert_eq!(
+            default_extract_ip(request.headers(), request.extensions()),
+            Some(ip("203.0.113.9")),
+            "the peer address wins over any header"
+        );
+    }
+
+    #[test]
+    fn default_extract_ip_falls_back_to_forwarded_headers() {
+        let request_with = |header: &str, value: &str| {
+            Request::builder()
+                .header(header, value)
+                .body(())
+                .expect("request")
+        };
+
+        let request = request_with("x-forwarded-for", "198.51.100.7, 10.0.0.1");
+        assert_eq!(
+            default_extract_ip(request.headers(), request.extensions()),
+            Some(ip("198.51.100.7")),
+            "the leftmost entry is the client"
+        );
+
+        let request = request_with("x-forwarded-for", "192.0.2.5:8443");
+        assert_eq!(
+            default_extract_ip(request.headers(), request.extensions()),
+            Some(ip("192.0.2.5")),
+            "a socket-literal entry contributes its address"
+        );
+
+        let request = request_with("x-real-ip", "203.0.113.8");
+        assert_eq!(
+            default_extract_ip(request.headers(), request.extensions()),
+            Some(ip("203.0.113.8"))
+        );
+
+        let request = request_with("x-forwarded-for", "not-an-ip");
+        assert_eq!(
+            default_extract_ip(request.headers(), request.extensions()),
+            None,
+            "a junk header is not a client"
+        );
+
+        let request = request_with("x-other", "203.0.113.8");
+        assert_eq!(
+            default_extract_ip(request.headers(), request.extensions()),
+            None,
+            "no peer and no forwarded header, no identity"
+        );
+
+        let request = request_with("x-forwarded-for", "::ffff:192.0.2.7");
+        assert_eq!(
+            default_extract_ip(request.headers(), request.extensions()),
+            Some(ip("::ffff:192.0.2.7")),
+            "the mapped form parses; the stores canonicalize it"
+        );
+    }
+
+    #[test]
+    fn custom_ip_extractor_replaces_the_default() {
+        let stage = RateLimitStage::builder(RateLimitStageConfig::default())
+            .ip_extractor(|_headers, _extensions| Some(ip("192.0.2.99")))
+            .build()
+            .expect("valid config");
+        let request = Request::builder().body(()).expect("request");
+        let extracted = (stage.extract_ip)(request.headers(), request.extensions());
+        assert_eq!(extracted, Some(ip("192.0.2.99")));
+    }
+
+    /// The future the plumbing tests drive: the stub futures are always
+    /// immediately ready, so a noop-waker spin never spins.
+    fn block_on<F: Future>(future: F) -> F::Output {
+        let mut future = std::pin::pin!(future);
+        let waker = std::task::Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        loop {
+            match future.as_mut().poll(&mut cx) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => std::hint::spin_loop(),
+            }
+        }
+    }
+
+    /// The inner service the plumbing tests wrap: counts its calls and
+    /// answers `200 "inner"`.
+    #[derive(Clone)]
+    struct Inner {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl Inner {
+        fn new() -> Self {
+            Self {
+                calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+
+        fn call_count(&self) -> usize {
+            self.calls.load(Ordering::Relaxed)
+        }
+    }
+
+    impl ::tower::Service<Request<&'static str>> for Inner {
+        type Response = Response<&'static str>;
+        type Error = Infallible;
+        type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Infallible>> + Send>>;
+
+        fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn call(&mut self, request: Request<&'static str>) -> Self::Future {
+            self.calls.fetch_add(1, Ordering::Relaxed);
+            drop(request);
+            Box::pin(async move { Ok(Response::new("inner")) })
+        }
+    }
+
+    /// A request the default extractor can read the client IP from: the
+    /// peer address as a `SocketAddr` extension, the wire convention.
+    fn request_from_client(ip_text: &str) -> Request<&'static str> {
+        let socket = SocketAddr::from_str(&format!("{ip_text}:65535")).expect("socket");
+        Request::builder()
+            .extension(socket)
+            .body("body")
+            .expect("request")
+    }
+
+    #[test]
+    fn layer_passes_through_and_the_inner_service_answers() {
+        let layer = RateLimitStageLayer::new(
+            RateLimitStage::new(RateLimitStageConfig::default()).expect("default config"),
+        );
+        let inner = Inner::new();
+        let mut service = ServiceBuilder::new().layer(layer).service(inner.clone());
+
+        let response = block_on(service.call(request_from_client("192.0.2.20"))).expect("ready");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.body(), &"inner");
+        assert_eq!(inner.call_count(), 1);
+    }
+
+    #[test]
+    fn layer_answers_the_throttle_without_hitting_the_inner_service() {
+        let stage = throttling_stage(1, Arc::new(system_clock));
+        let inner = Inner::new();
+        let mut service = ServiceBuilder::new()
+            .layer(RateLimitStageLayer::new(stage))
+            .service(inner.clone());
+
+        let first = block_on(service.call(request_from_client("192.0.2.21"))).expect("ready");
+        assert_eq!(first.status(), StatusCode::OK);
+
+        let second = block_on(service.call(request_from_client("192.0.2.21"))).expect("ready");
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            second
+                .headers()
+                .get(RETRY_AFTER)
+                .and_then(|value| value.to_str().ok()),
+            Some("60"),
+            "Retry-After carries the window"
+        );
+        assert_eq!(second.body(), &THROTTLED_BODY);
+        assert_eq!(inner.call_count(), 1, "the throttled request never hits it");
+    }
+
+    #[test]
+    fn layer_answers_the_banned_shape() {
+        let stage = throttling_stage(10, Arc::new(system_clock));
+        stage.bans().ban_ip(ip("192.0.2.22"), 60, "x").expect("ban");
+        let inner = Inner::new();
+        let mut service = ServiceBuilder::new()
+            .layer(RateLimitStageLayer::new(stage))
+            .service(inner.clone());
+
+        let response = block_on(service.call(request_from_client("192.0.2.22"))).expect("ready");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert_eq!(response.body(), &BANNED_BODY);
+        assert_eq!(inner.call_count(), 0, "bans answer before the inner runs");
+    }
+
+    #[test]
+    fn layer_clone_shares_the_stage_stores() {
+        let stage = throttling_stage(1, Arc::new(system_clock));
+        let mut first = RateLimitStageService {
+            inner: Inner::new(),
+            stage,
+        };
+        let mut second = first.clone();
+
+        let _ = block_on(first.call(request_from_client("192.0.2.23"))).expect("ready");
+        let second_response =
+            block_on(second.call(request_from_client("192.0.2.23"))).expect("ready");
+        assert_eq!(second_response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+}

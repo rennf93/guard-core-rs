@@ -379,6 +379,25 @@ impl IpBanManager {
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
+        Self::with_trusted_proxies_and_clock(entries, Arc::new(system_clock))
+    }
+
+    /// Build a ban store whose self-ban refusal also covers the given
+    /// trusted-proxy networks and whose wall clock is injected: the combined
+    /// seam [`with_trusted_proxies`](Self::with_trusted_proxies) and
+    /// [`with_clock`](Self::with_clock) cover separately. Adapters that run
+    /// deterministic expiry tests under a production-shaped proxy list use
+    /// this one.
+    ///
+    /// # Errors
+    ///
+    /// [`IpGateError`] naming the offending entry, exactly like
+    /// `IpBanManager::with_trusted_proxies` fails closed.
+    pub fn with_trusted_proxies_and_clock<I>(entries: I, clock: Clock) -> Result<Self, IpGateError>
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
         let mut trusted_proxies = Vec::new();
         for entry in entries {
             let entry = entry.as_ref();
@@ -395,7 +414,7 @@ impl IpBanManager {
         Ok(Self {
             bans: new_ban_store(),
             trusted_proxies,
-            clock: Arc::new(system_clock),
+            clock,
         })
     }
 

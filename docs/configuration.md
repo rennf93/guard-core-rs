@@ -166,6 +166,47 @@ before the first `:`) to one of `query_param`, `header`, `url_path`,
 filters; embedded-JSON leaf contexts (a `:embedded_json` suffix) keep the
 suffix for validator scoping.
 
+## The tower stage (guard_core_rs::tower)
+
+The facade crate carries the first pipeline stage: a `tower::Layer`
+(`RateLimitStageLayer`) for Axum/tonic-shaped stacks that wires the stateful
+modules above into one request pass, mirroring the reference pipeline's
+behavior for the two checks the stage owns (`rate_limit`, the ban check of
+`ip_security`, and the detection feed of `suspicious_activity`):
+
+| Request state | Decision |
+|---|---|
+| no client IP | pass through |
+| banned (no exemption skip) | `403 "IP address banned"` |
+| over the rate limit (skipped for `is_whitelisted \|\| is_exempt`) | `429 "Too many requests"` + `Retry-After: <window>` |
+| detection finding crosses a ban threshold (skipped for whitelisted, never exempt) | `403 "IP has been banned"` |
+| everything else | pass through |
+
+- The client IP comes from the `SocketAddr` request extension (the peer
+  address), falling back to the leftmost `x-forwarded-for` entry, then
+  `x-real-ip`; a custom extractor replaces the default policy.
+- The skip state is an `IpGateDecision` request extension, exactly what the
+  global IP gate leaves behind; bans and detection still apply to an exempt
+  IP.
+- A crossing feeds `register_violations` with the `rate_limit`
+  pseudo-category (reason `rate_limit_exceeded`) when
+  `enable_rate_limit_auto_ban` is on; the `429` still goes out and the ban
+  answers the next request, as in the reference.
+- A `ThreatFinding` request extension (what a prior detection stage
+  inserts) feeds the same engine with its categories (reason
+  `penetration_attempt`); the crossing request itself is answered with the
+  403 crossing-ban shape.
+- The stage config is the pair of stateful configs above
+  (`RateLimitStageConfig { rate_limit, ip_ban }`); construction fails
+  closed on any invalid part (rate limit bounds, trusted-proxy entries,
+  ban-config validation).
+- Not yet mirrored: the endpoint-rate-limit tier (`endpoint_rate_limits`,
+  route decorators, geo tiers; the stage runs the global per-IP window,
+  the reference default tier), the reference's `passive_mode` (no
+  counterpart in the Rust config surface yet), and the suspicious-activity
+  `400` answer for a threat below the ban threshold (the detection stage
+  has no tower counterpart yet).
+
 ## What is not implemented (fail-closed honesty)
 
 The port targets spec 4.0.2 and is not complete. Do not expect these yet:
@@ -175,13 +216,14 @@ The port targets spec 4.0.2 and is not complete. Do not expect these yet:
   baseline records the resulting divergences (the dominant cause of xfail
   entries).
 - **Config, pipeline, and handler sections** (Python sections 02, 03,
-  07-12): no `SecurityConfig`, no middleware pipeline, no handlers,
+  07-12): no `SecurityConfig`, no middleware protocol, no handlers,
   protocols, or decorators. The global IP gate (`whitelist`, `blacklist`,
   `exempt_ips`) exists (`ip_gate`), the in-memory rate limiter and dynamic
-  IP ban store exist (`rate_limit`, `ip_ban`), but there is no Redis-backed
-  distributed mode, no cloud provider blocking, no user-agent filtering, and
-  no response factory; the pipeline stages that call the stateful modules
-  live in the framework adapters.
+  IP ban store exist (`rate_limit`, `ip_ban`), and the rate-limit/ban
+  pipeline stage exists for tower stacks (`guard_core_rs::tower`), but there
+  is no Redis-backed distributed mode, no cloud provider blocking, no
+  user-agent filtering, and no response factory; actix/rocket stages and
+  the remaining pipeline stages live in the framework adapters.
 - **`PerformanceMonitor`** and per-scan timeouts, plus a handful of tracked
   detection knobs recorded as unmapped with reasons.
 
