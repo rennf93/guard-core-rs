@@ -1,9 +1,6 @@
-[graph]
-all-features = true
-
+# cargo-audit config (read by the `cargo audit` CI step).
+# Mirrors the [advisories] ignore list in deny.toml so both scanners agree.
 [advisories]
-version = 2
-yanked = "deny"
 ignore = [
   # h2 0.3.27 (RUSTSEC-2026-0258, unbounded empty DATA frames): the rocket
   # example (examples/rocket_app) pulls rocket 0.5.1, whose rocket_http hard
@@ -13,23 +10,3 @@ ignore = [
   # publish = false. Revisit when rocket ships a hyper 0.14-free release.
   "RUSTSEC-2026-0258",
 ]
-
-[licenses]
-version = 2
-allow = [
-  "MIT",
-  "Apache-2.0",
-  "Apache-2.0 WITH LLVM-exception",
-  "BSD-3-Clause",
-  "ISC",
-  "Unicode-3.0",
-  "Zlib",
-]
-
-[bans]
-multiple-versions = "warn"
-wildcards = "deny"
-
-[sources]
-unknown-registry = "deny"
-unknown-git = "deny"

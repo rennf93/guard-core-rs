@@ -184,7 +184,6 @@ fn render_block<B: MessageBody + 'static>(
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr as _;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
