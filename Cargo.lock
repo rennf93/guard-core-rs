@@ -263,6 +263,8 @@ name = "guard-core-rs"
 version = "4.0.4"
 dependencies = [
  "guard-core-engine",
+ "http",
+ "tower",
 ]
 
 [[package]]
