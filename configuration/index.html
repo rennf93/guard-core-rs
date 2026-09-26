@@ -441,6 +441,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#request-size-and-content-type-limits-request_limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request size and content-type limits (request_limits)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-tower-stage-guard_core_rstower" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -595,6 +606,17 @@
     <span class="md-ellipsis">
       
         Request contexts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request-size-and-content-type-limits-request_limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request size and content-type limits (request_limits)
       
     </span>
   </a>
@@ -919,6 +941,63 @@ before the first <code>:</code>) to one of <code>query_param</code>, <code>heade
 <code>request_body</code>, or <code>unknown</code>. Unknown contexts relax the pattern view
 filters; embedded-JSON leaf contexts (a <code>:embedded_json</code> suffix) keep the
 suffix for validator scoping.</p>
+<h2 id="request-size-and-content-type-limits-request_limits">Request size and content-type limits (request_limits)</h2>
+<p>The route-scoped size and content gate mirrors the reference engine's
+<code>request_size_content</code> check
+(<code>guard_core/core/checks/implementations/request_size_content.py</code>). The
+decision core is <code>guard_core_engine::request_limits::decide</code>; the tower stage
+is <code>guard_core_rs::request_limits::RequestLimitsStageLayer</code>.</p>
+<p>Both limits are route config in the reference (<code>RouteConfig.max_request_size</code>,
+<code>RouteConfig.allowed_content_types</code>); there is no global knob, so the Rust
+<code>ContentLimits</code> carries both as <code>Option</code> and the all-<code>None</code> default is inert:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Reference knob</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>max_request_size</code></td>
+<td><code>Option&lt;u64&gt;</code></td>
+<td><code>None</code></td>
+<td><code>RouteConfig.max_request_size</code> (bytes)</td>
+</tr>
+<tr>
+<td><code>allowed_content_types</code></td>
+<td><code>Option&lt;Vec&lt;String&gt;&gt;</code></td>
+<td><code>None</code></td>
+<td><code>RouteConfig.allowed_content_types</code></td>
+</tr>
+</tbody>
+</table>
+<p>Behavior, in the reference's order:</p>
+<ul>
+<li><strong>Size first</strong>: a missing or empty <code>content-length</code> header passes; a value
+  at or under the limit passes; one over answers <code>413 "Request too large"</code>
+  (reason <code>Request size {n} exceeds limit: {max}</code>). The parse mirrors
+  Python's <code>int()</code>: surrounding whitespace and a leading sign are accepted,
+  and a negative value passes (<code>-1 &lt;= limit</code>).</li>
+<li><strong>Then the media type</strong>: the exact prefix before the first <code>;</code> (no trim,
+  case-sensitive) must be in <code>allowed_content_types</code>, else
+  <code>415 "Unsupported content type"</code>. A missing <code>content-type</code> header compares
+  as the empty string and is blocked by any non-empty allowed list, exactly
+  as in Python.</li>
+<li><strong>Fail-secure</strong>: a non-integer <code>content-length</code> header mirrors the
+  reference's <code>int()</code> <code>ValueError</code>: <code>decide</code> returns <code>Err</code>, and the tower
+  service answers the pipeline's fail-secure shape
+  <code>500 "Security check failed"</code> (<code>fail_secure = True</code> default).</li>
+</ul>
+<p>The stage learns a path's limits through a <code>RouteLimitsResolver</code>
+(<code>path -&gt; Option&lt;ContentLimits&gt;</code>, the tower counterpart of the reference's
+<code>request.state.route_config</code>); an unconfigured path passes.</p>
+<p>Not mirrored: the reference's <code>EVENT_CONTENT_FILTERED</code> events, <code>log_activity</code>
+entries, <code>passive_mode</code> (no Rust config surface yet), the <code>on_block</code> hook,
+and <code>custom_error_responses</code> body overrides. The decision core returns the
+reference reason strings for adapters that log.</p>
 <h2 id="the-tower-stage-guard_core_rstower">The tower stage (guard_core_rs::tower)</h2>
 <p>The facade crate carries the first pipeline stage: a <code>tower::Layer</code>
 (<code>RateLimitStageLayer</code>) for Axum/tonic-shaped stacks that wires the stateful
@@ -1026,10 +1105,11 @@ respectively), and the trusted-proxies seam stays on the stage builder
   07-12): no <code>SecurityConfig</code>, no middleware protocol, no handlers,
   protocols, or decorators. The global IP gate (<code>whitelist</code>, <code>blacklist</code>,
   <code>exempt_ips</code>) exists (<code>ip_gate</code>), the in-memory rate limiter and dynamic
-  IP ban store exist (<code>rate_limit</code>, <code>ip_ban</code>), and the rate-limit/ban
+  IP ban store exist (<code>rate_limit</code>, <code>ip_ban</code>), the rate-limit/ban
   pipeline stage exists for tower stacks (<code>guard_core_rs::tower</code>) and as
   example wirings for actix-web and Rocket (<code>examples/actix_app</code>,
-  <code>examples/rocket_app</code>), but there
+  <code>examples/rocket_app</code>), and the route-scoped request size/content gate
+  exists (<code>request_limits</code>), but there
   is no Redis-backed distributed mode, no cloud provider blocking, no
   user-agent filtering, and no response factory; the remaining pipeline
   stages and the published framework adapters live in the adapter repos.</li>
