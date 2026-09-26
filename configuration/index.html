@@ -358,6 +358,34 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#ipgateconfig-whitelist-blacklist-exempt_ips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IpGateConfig (whitelist / blacklist / exempt_ips)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="IpGateConfig (whitelist / blacklist / exempt_ips)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#exempt_ips-vs-whitelist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        exempt_ips vs whitelist
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#detectconfig" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -447,6 +475,34 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#ipgateconfig-whitelist-blacklist-exempt_ips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IpGateConfig (whitelist / blacklist / exempt_ips)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="IpGateConfig (whitelist / blacklist / exempt_ips)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#exempt_ips-vs-whitelist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        exempt_ips vs whitelist
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#detectconfig" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -524,7 +580,53 @@
 <h1 id="configuration">Configuration</h1>
 <p>There is no global config struct yet (the Python <code>SecurityConfig</code> section is
 not ported). Detection is tuned through one flat struct,
-<code>guard_core_rs::detect::DetectConfig</code>, passed to every <code>detect</code> call.</p>
+<code>guard_core_rs::detect::DetectConfig</code>, passed to every <code>detect</code> call, and the
+global IP gate through one flat struct, <code>guard_core_engine::ip_gate::IpGateConfig</code>.</p>
+<h2 id="ipgateconfig-whitelist-blacklist-exempt_ips">IpGateConfig (whitelist / blacklist / exempt_ips)</h2>
+<p>The global IP gate is the Rust family's minimal port of the reference
+engine's global IP stage. Build it once at startup with
+<code>IpGateConfig::new(whitelist, blacklist, exempt_ips)</code>, which fails closed on
+an invalid entry, and evaluate request IPs with <code>IpGateConfig::evaluate</code>:</p>
+<table>
+<thead>
+<tr>
+<th>List</th>
+<th>Semantics</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>whitelist</code></td>
+<td>Allowlist. When non-empty, every IP it does not match is denied (<code>IP not in whitelist</code>)</td>
+</tr>
+<tr>
+<td><code>blacklist</code></td>
+<td>Denylist, consulted when <code>whitelist</code> is empty (<code>IP is blacklisted</code>)</td>
+</tr>
+<tr>
+<td><code>exempt_ips</code></td>
+<td>Skip-list for known-friendly automation; sets the skip flag, never a deny path</td>
+</tr>
+</tbody>
+</table>
+<p>Matching semantics are identical for all three lists, mirroring the reference
+whitelist matcher: a bare IP or a CIDR range (host bits cleared at parse
+time), IPv4-mapped forms matched against their IPv4 canonical form
+(<code>::ffff:203.0.113.7</code> matches <code>203.0.113.7</code> and <code>203.0.113.0/24</code>), and no
+cross-family matching.</p>
+<h3 id="exempt_ips-vs-whitelist">exempt_ips vs whitelist</h3>
+<p><code>exempt_ips</code> is noise reduction for known-friendly automation (monitoring
+probes, VPN egress, a partner's server), not immunity: it is noise reduction
+for known-friendly automation, not immunity; the blacklist, dynamic bans,
+route rules and detection still apply. An exempt match sets the same skip
+state a whitelist match sets (<code>IpGateDecision::is_exempt</code>) but never adds a
+deny path of its own and never opens the whitelist gate: with a restrictive
+whitelist, an exempt IP that is not itself whitelisted is still denied. The
+Rust family ships no rate limiter, user-agent filter, cloud-provider blocker,
+or violation counter yet, so there is nothing for the flag to skip today; a
+stage that lands later must skip exactly what the reference skips for a
+whitelist match (<code>is_whitelisted || is_exempt</code>) and must never skip
+penetration detection.</p>
 <h2 id="detectconfig">DetectConfig</h2>
 <table>
 <thead>
@@ -589,8 +691,9 @@ suffix for validator scoping.</p>
   entries).</li>
 <li><strong>Config, pipeline, and handler sections</strong> (Python sections 02, 03,
   07-12): no <code>SecurityConfig</code>, no middleware pipeline, no handlers,
-  protocols, or decorators. There is no rate limiting, no IP banning, no
-  cloud provider blocking, no Redis, and no response factory.</li>
+  protocols, or decorators. The global IP gate (<code>whitelist</code>, <code>blacklist</code>,
+  <code>exempt_ips</code>) exists (<code>ip_gate</code>), but there is no rate limiting, no IP
+  banning, no cloud provider blocking, no Redis, and no response factory.</li>
 <li><strong><code>PerformanceMonitor</code></strong> and per-scan timeouts, plus a handful of tracked
   detection knobs recorded as unmapped with reasons.</li>
 </ul>
