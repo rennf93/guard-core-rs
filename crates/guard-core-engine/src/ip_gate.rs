@@ -74,12 +74,13 @@ use std::str::FromStr;
 /// The skip state a request carries after it passed the global IP gate.
 ///
 /// This is the family-local equivalent of the reference engine's
-/// `state.is_whitelisted` / `state.is_exempt` pair. The Rust family currently
-/// ships no rate limiter, user-agent filter, cloud-provider blocker, or
-/// violation counter, so there is nothing to skip yet; a stage that lands
-/// later must skip for `is_whitelisted || is_exempt` exactly what the
-/// reference skips for a whitelist match, and must never skip penetration
-/// detection.
+/// `state.is_whitelisted` / `state.is_exempt` pair. The stateful stages the
+/// engine ships (the rate limiter and the auto-ban violation counter, see
+/// [`crate::rate_limit`] and [`crate::ip_ban`]) skip for
+/// `is_whitelisted || is_exempt` exactly what the reference skips for a
+/// whitelist match, and never skip penetration detection. A stage that lands
+/// later (user-agent filter, cloud-provider blocker) must follow the same
+/// rule.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct IpGateDecision {
     /// A non-empty `whitelist` matched the request IP.
@@ -130,9 +131,9 @@ enum Entry {
 
 /// A CIDR range with the host bits cleared at parse time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct IpNet {
-    addr: IpAddr,
-    prefix: u8,
+pub(crate) struct IpNet {
+    pub(crate) addr: IpAddr,
+    pub(crate) prefix: u8,
 }
 
 impl IpNet {
@@ -141,7 +142,7 @@ impl IpNet {
     /// The network keeps the family its literal was written in: Python and Go
     /// both treat `::ffff:0:0/96` as an IPv6 network, so the request side is
     /// what gets canonicalized (see [`entry_matches`]), never the entry.
-    fn parse(text: &str) -> Option<Self> {
+    pub(crate) fn parse(text: &str) -> Option<Self> {
         let (addr_part, prefix_part) = text.split_once('/')?;
         let addr = IpAddr::from_str(addr_part).ok()?;
         let prefix = u8::from_str(prefix_part).ok()?;
@@ -157,7 +158,7 @@ impl IpNet {
 
     /// Family-preserving membership: an IPv4 network never contains an IPv6
     /// address and vice versa.
-    fn contains(&self, addr: IpAddr) -> bool {
+    pub(crate) fn contains(&self, addr: IpAddr) -> bool {
         match (self.addr, addr) {
             (IpAddr::V4(net), IpAddr::V4(ip)) => {
                 u32::from(net) == (u32::from(ip) & v4_mask(self.prefix))
@@ -178,9 +179,25 @@ fn parse_entry(text: &str) -> Option<Entry> {
     Some(Entry::Exact(canonical(IpAddr::from_str(text).ok()?)))
 }
 
-/// Undo a `::ffff:a.b.c.d` mapping: the canonical form exact entries and
-/// request addresses are compared in.
-const fn canonical(addr: IpAddr) -> IpAddr {
+/// Parse one list entry into a network: a CIDR range as written (host bits
+/// cleared) or a bare IP as a single-host network of its own family. The
+/// overlap checks of the dynamic ban store (loopback and trusted-proxy
+/// refusal) compare request addresses against networks built from this.
+pub(crate) fn parse_network_entry(text: &str) -> Option<IpNet> {
+    match parse_entry(text)? {
+        Entry::Exact(addr) => Some(IpNet {
+            addr,
+            prefix: family_bits(addr),
+        }),
+        Entry::Network(net) => Some(net),
+    }
+}
+
+/// Undo a `::ffff:a.b.c.d` mapping: the canonical form exact entries, request
+/// addresses, and every stateful store key (rate windows, ban entries) are
+/// compared in, so a v4-mapped request counts toward the same bucket as its
+/// IPv4 form.
+pub(crate) const fn canonical(addr: IpAddr) -> IpAddr {
     match addr {
         IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
             Some(v4) => IpAddr::V4(v4),

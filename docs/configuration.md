@@ -2,8 +2,11 @@
 
 There is no global config struct yet (the Python `SecurityConfig` section is
 not ported). Detection is tuned through one flat struct,
-`guard_core_rs::detect::DetectConfig`, passed to every `detect` call, and the
-global IP gate through one flat struct, `guard_core_engine::ip_gate::IpGateConfig`.
+`guard_core_rs::detect::DetectConfig`, passed to every `detect` call, the
+global IP gate through `guard_core_engine::ip_gate::IpGateConfig`, and the
+stateful layer (rate limiting, dynamic bans) through
+`guard_core_engine::rate_limit::RateLimitConfig` and
+`guard_core_engine::ip_ban::IpBanConfig`.
 
 ## IpGateConfig (whitelist / blacklist / exempt_ips)
 
@@ -33,11 +36,109 @@ route rules and detection still apply. An exempt match sets the same skip
 state a whitelist match sets (`IpGateDecision::is_exempt`) but never adds a
 deny path of its own and never opens the whitelist gate: with a restrictive
 whitelist, an exempt IP that is not itself whitelisted is still denied. The
-Rust family ships no rate limiter, user-agent filter, cloud-provider blocker,
-or violation counter yet, so there is nothing for the flag to skip today; a
-stage that lands later must skip exactly what the reference skips for a
-whitelist match (`is_whitelisted || is_exempt`) and must never skip
-penetration detection.
+stateful stages below (rate limiting, violation counting, dynamic bans) skip
+exactly what the reference skips for a whitelist match
+(`is_whitelisted || is_exempt`) and never skip penetration detection; a
+stage that lands later (user-agent filter, cloud-provider blocker) must
+follow the same rule.
+
+## Rate limiting (rate_limit)
+
+The sliding-window rate limiter mirrors the reference engine's rate
+limiter in its in-memory mode (the reference falls back to this exact store
+when Redis is off; the Redis-distributed mode is a follow-up).
+
+`RateLimitConfig` carries the knobs:
+
+| Field | Type | Default | Reference knob |
+|---|---|---|---|
+| `enable_rate_limiting` | `bool` | `false` | `enable_rate_limiting` |
+| `rate_limit` | `u32` | `10` | `rate_limit` (requests per window, >= 1) |
+| `rate_limit_window` | `u64` | `60` | `rate_limit_window` (seconds, >= 1) |
+| `enable_rate_limit_auto_ban` | `bool` | `false` | `enable_rate_limit_auto_ban` |
+
+Two deltas from the Python reference are deliberate: the engine default for
+`enable_rate_limiting` is `false` (Python defaults `true`; the Rust family
+pins the conservative value so enabling is an explicit act), and the config
+constructor fails closed on a zero limit or window (Python's pydantic
+rejects them with `ge=1`).
+
+Counting semantics: one sliding log of request timestamps per
+`(client IP, scope)`. Before a request is recorded, every timestamp at or
+before `now - window` is evicted; the pre-recording count decides
+(`allowed = count < rate_limit`), and the block reports
+`count + 1` (the current request included), exactly the reference's
+in-memory formulation. The Redis formulation (`allowed = count <= limit`
+over the post-recording rank) draws the same boundary. A blocked caller
+retries after the window (`Retry-After: <window seconds>`, the reference's
+`429 Too many requests` shape). The window store is an LRU capped at 10 000
+keys (`_MAX_TRACKED_RATE_LIMIT_KEYS`).
+
+Scope: `check(ip, None)` is the global per-IP window (the default pipeline
+tier, every endpoint sharing one budget); `check(ip, Some(path))` is the
+per-endpoint window keyed by `(ip, path)` (the reference's
+`endpoint_path`-keyed tier).
+
+## Dynamic IP bans and the auto-ban engine (ip_ban)
+
+The ban store mirrors the reference `IPBanManager` in its in-memory mode:
+
+- `ban_ip(ip, duration, reason)` records `expiry = now + duration`; a
+  duration of zero is rejected (`BanError::NonPositiveDuration`, the
+  reference raises). Re-banning a live IP overwrites its record.
+- Durations beyond `LOCAL_CACHE_TTL_CAP_SECONDS` (3600) are clamped to it,
+  the references' local-store cap (`clampToLocalCap`, cause
+  `not configured`, and the Python `TTLCache(ttl=3600)`); only the Redis
+  backend honors longer bans. The default `auto_ban_duration` sits exactly
+  at the cap.
+- `is_banned(ip)` honors expiry with the Go boundary: an IP is banned while
+  `now <= expiry`; strictly past it the entry reads unbanned and is dropped.
+- The store is an LRU capped at 10 000 entries (silent overflow, the
+  references' `localCacheMaxSize` / `maxsize=10000`).
+- Self-ban refusal: loopback (`127.0.0.0/8`, `::1/128`) and configured
+  trusted-proxy targets return `Ok(false)` and record nothing - the
+  references' self-DoS guard. Trusted proxies parse fail closed
+  (`IpBanManager::with_trusted_proxies`).
+- IPv4-mapped addresses canonicalize to their IPv4 form before any store
+  key, so `::ffff:203.0.113.7` and `203.0.113.7` share buckets, bans, and
+  counters.
+
+`IpBanConfig` carries the auto-ban knobs:
+
+| Field | Type | Default | Reference knob |
+|---|---|---|---|
+| `enable_ip_banning` | `bool` | `false` | `enable_ip_banning` |
+| `auto_ban_threshold` | `u32` | `10` | `auto_ban_threshold` (>= 1) |
+| `auto_ban_duration` | `u64` | `3600` | `auto_ban_duration` (seconds, >= 1) |
+| `threat_ban_config` | map of category to `ThreatBanEntry { threshold, duration }` | empty | `threat_ban_config` |
+
+Category keys are validated at config time (fail closed, like
+`IpGateConfig`): a key must be a pattern-table detection category or the
+`rate_limit` pseudo-category (`valid_threat_categories()`), the reference's
+`ALL_DETECTION_CATEGORIES | {'rate_limit'}` set. Unknown keys are rejected,
+as in Python and the TypeScript port.
+
+Violation counting and threshold resolution mirror
+`_resolve_and_apply_threshold_ban` (the TypeScript `resolveThresholdBan`):
+`ViolationCounters` accumulates per IP per category (LRU capped at 10 000
+IPs, `_MAX_TRACKED_SUSPICIOUS_IPS`; an empty category list records
+`uncategorized`), and `IpBanManager::register_violations` (or the pure
+`resolve_threshold_ban`) resolves in the reference's order:
+
+1. banning disabled: no ban (violations still count, so enabling banning
+   later starts from observed history);
+2. the first listed category whose `threat_ban_config` entry's threshold is
+   met (`count >= threshold`) bans with that entry's duration and reason
+   `"<reason>:<category>"`;
+3. otherwise the flat threshold, measured against the total of all counted
+   categories, bans with `auto_ban_duration` and the plain reason;
+4. the self-DoS guard can refuse the resulting ban.
+
+The rate-limit pseudo-category feeds the same engine when
+`enable_rate_limit_auto_ban` is on: a rate-limit crossing counts as one
+`rate_limit` violation, so `threat_ban_config["rate_limit"]` overrides and
+the flat threshold backs it up (reason `rate_limit_exceeded`), exactly the
+reference pipeline's behavior.
 
 ## DetectConfig
 
@@ -76,8 +177,11 @@ The port targets spec 4.0.2 and is not complete. Do not expect these yet:
 - **Config, pipeline, and handler sections** (Python sections 02, 03,
   07-12): no `SecurityConfig`, no middleware pipeline, no handlers,
   protocols, or decorators. The global IP gate (`whitelist`, `blacklist`,
-  `exempt_ips`) exists (`ip_gate`), but there is no rate limiting, no IP
-  banning, no cloud provider blocking, no Redis, and no response factory.
+  `exempt_ips`) exists (`ip_gate`), the in-memory rate limiter and dynamic
+  IP ban store exist (`rate_limit`, `ip_ban`), but there is no Redis-backed
+  distributed mode, no cloud provider blocking, no user-agent filtering, and
+  no response factory; the pipeline stages that call the stateful modules
+  live in the framework adapters.
 - **`PerformanceMonitor`** and per-scan timeouts, plus a handful of tracked
   detection knobs recorded as unmapped with reasons.
 
