@@ -441,6 +441,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#the-tower-stage-guard_core_rstower" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The tower stage (guard_core_rs::tower)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#what-is-not-implemented-fail-closed-honesty" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -573,6 +584,17 @@
     <span class="md-ellipsis">
       
         Request contexts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-tower-stage-guard_core_rstower" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The tower stage (guard_core_rs::tower)
       
     </span>
   </a>
@@ -875,6 +897,68 @@ before the first <code>:</code>) to one of <code>query_param</code>, <code>heade
 <code>request_body</code>, or <code>unknown</code>. Unknown contexts relax the pattern view
 filters; embedded-JSON leaf contexts (a <code>:embedded_json</code> suffix) keep the
 suffix for validator scoping.</p>
+<h2 id="the-tower-stage-guard_core_rstower">The tower stage (guard_core_rs::tower)</h2>
+<p>The facade crate carries the first pipeline stage: a <code>tower::Layer</code>
+(<code>RateLimitStageLayer</code>) for Axum/tonic-shaped stacks that wires the stateful
+modules above into one request pass, mirroring the reference pipeline's
+behavior for the two checks the stage owns (<code>rate_limit</code>, the ban check of
+<code>ip_security</code>, and the detection feed of <code>suspicious_activity</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Request state</th>
+<th>Decision</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>no client IP</td>
+<td>pass through</td>
+</tr>
+<tr>
+<td>banned (no exemption skip)</td>
+<td><code>403 "IP address banned"</code></td>
+</tr>
+<tr>
+<td>over the rate limit (skipped for <code>is_whitelisted \|\| is_exempt</code>)</td>
+<td><code>429 "Too many requests"</code> + <code>Retry-After: &lt;window&gt;</code></td>
+</tr>
+<tr>
+<td>detection finding crosses a ban threshold (skipped for whitelisted, never exempt)</td>
+<td><code>403 "IP has been banned"</code></td>
+</tr>
+<tr>
+<td>everything else</td>
+<td>pass through</td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li>The client IP comes from the <code>SocketAddr</code> request extension (the peer
+  address), falling back to the leftmost <code>x-forwarded-for</code> entry, then
+  <code>x-real-ip</code>; a custom extractor replaces the default policy.</li>
+<li>The skip state is an <code>IpGateDecision</code> request extension, exactly what the
+  global IP gate leaves behind; bans and detection still apply to an exempt
+  IP.</li>
+<li>A crossing feeds <code>register_violations</code> with the <code>rate_limit</code>
+  pseudo-category (reason <code>rate_limit_exceeded</code>) when
+  <code>enable_rate_limit_auto_ban</code> is on; the <code>429</code> still goes out and the ban
+  answers the next request, as in the reference.</li>
+<li>A <code>ThreatFinding</code> request extension (what a prior detection stage
+  inserts) feeds the same engine with its categories (reason
+  <code>penetration_attempt</code>); the crossing request itself is answered with the
+  403 crossing-ban shape.</li>
+<li>The stage config is the pair of stateful configs above
+  (<code>RateLimitStageConfig { rate_limit, ip_ban }</code>); construction fails
+  closed on any invalid part (rate limit bounds, trusted-proxy entries,
+  ban-config validation).</li>
+<li>Not yet mirrored: the endpoint-rate-limit tier (<code>endpoint_rate_limits</code>,
+  route decorators, geo tiers; the stage runs the global per-IP window,
+  the reference default tier), the reference's <code>passive_mode</code> (no
+  counterpart in the Rust config surface yet), and the suspicious-activity
+  <code>400</code> answer for a threat below the ban threshold (the detection stage
+  has no tower counterpart yet).</li>
+</ul>
 <h2 id="what-is-not-implemented-fail-closed-honesty">What is not implemented (fail-closed honesty)</h2>
 <p>The port targets spec 4.0.2 and is not complete. Do not expect these yet:</p>
 <ul>
@@ -883,13 +967,14 @@ suffix for validator scoping.</p>
   baseline records the resulting divergences (the dominant cause of xfail
   entries).</li>
 <li><strong>Config, pipeline, and handler sections</strong> (Python sections 02, 03,
-  07-12): no <code>SecurityConfig</code>, no middleware pipeline, no handlers,
+  07-12): no <code>SecurityConfig</code>, no middleware protocol, no handlers,
   protocols, or decorators. The global IP gate (<code>whitelist</code>, <code>blacklist</code>,
   <code>exempt_ips</code>) exists (<code>ip_gate</code>), the in-memory rate limiter and dynamic
-  IP ban store exist (<code>rate_limit</code>, <code>ip_ban</code>), but there is no Redis-backed
-  distributed mode, no cloud provider blocking, no user-agent filtering, and
-  no response factory; the pipeline stages that call the stateful modules
-  live in the framework adapters.</li>
+  IP ban store exist (<code>rate_limit</code>, <code>ip_ban</code>), and the rate-limit/ban
+  pipeline stage exists for tower stacks (<code>guard_core_rs::tower</code>), but there
+  is no Redis-backed distributed mode, no cloud provider blocking, no
+  user-agent filtering, and no response factory; actix/rocket stages and
+  the remaining pipeline stages live in the framework adapters.</li>
 <li><strong><code>PerformanceMonitor</code></strong> and per-scan timeouts, plus a handful of tracked
   detection knobs recorded as unmapped with reasons.</li>
 </ul>
