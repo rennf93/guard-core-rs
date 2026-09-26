@@ -220,6 +220,7 @@ mod tests {
                 ..RateLimitConfig::default()
             },
             ip_ban: IpBanConfig::default(),
+            passive_mode: false,
         })
         .clock(clock)
         .build()
@@ -369,7 +370,7 @@ mod tests {
     }
 
     #[actix_web::test]
-    async fn default_stage_passes_everything_through() {
+    async fn default_stage_throttles_at_the_reference_threshold() {
         let stage = RateLimitStage::new(RateLimitStageConfig::default()).expect("default config");
         let app = test::init_service(
             App::new()
@@ -381,10 +382,14 @@ mod tests {
                 ),
         )
         .await;
-        for _ in 0..25 {
+        // The reference defaults: rate limiting on, 10 requests per 60 s
+        // window per IP, so the first ten pass and the eleventh throttles.
+        for _ in 0..10 {
             let response = test::call_service(&app, request_from("192.0.2.5")).await;
             assert_eq!(response.status(), StatusCode::OK);
         }
+        let throttled = test::call_service(&app, request_from("192.0.2.5")).await;
+        assert_eq!(throttled.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
     #[actix_web::test]
@@ -467,6 +472,7 @@ mod tests {
                 auto_ban_threshold: 1,
                 ..IpBanConfig::default()
             },
+            passive_mode: false,
         })
         .clock(fake.clock())
         .build()

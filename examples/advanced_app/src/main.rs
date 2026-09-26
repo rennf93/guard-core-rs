@@ -138,7 +138,7 @@ impl Service<Request<Incoming>> for BodyMapped {
 /// The guard shim: buffers the body, caps its size, then runs the engine's
 /// detection pipeline over the path, each query parameter value, and the
 /// body, each with its reference request context. A threat verdict becomes a
-/// `403`; an over-cap body becomes a `413`. The config and body cap are
+/// `400`; an over-cap body becomes a `413`. The config and body cap are
 /// per-tree, which is how route-scoped guard strictness is expressed here.
 #[derive(Clone)]
 struct GuardService<R> {
@@ -211,7 +211,7 @@ fn is_threat(content: &str, source: &str, config: &DetectConfig) -> bool {
 }
 
 fn block_response() -> Response<Full<Bytes>> {
-    json_response(StatusCode::FORBIDDEN, SUSPICIOUS_BODY)
+    json_response(StatusCode::BAD_REQUEST, SUSPICIOUS_BODY)
 }
 
 /// Splits a raw query string into percent-decoded values (keys are dropped).

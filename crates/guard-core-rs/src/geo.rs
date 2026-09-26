@@ -67,6 +67,7 @@
 //! let stage = GeoStage::new(GeoStageConfig {
 //!     gate: parse_country_lists([] as [&str; 0], ["RU"]),
 //!     handler: Some(Arc::new(Germany)),
+//!     passive_mode: false,
 //! });
 //!
 //! let decision = stage.decide(Some(IpAddr::from_str("192.0.2.1").unwrap()), None);
@@ -110,6 +111,10 @@ pub struct GeoStageConfig {
     /// a restrictive whitelist blocks everything and a blocklist never
     /// fires - configure a handler for either rule to mean anything.
     pub handler: Option<Arc<dyn GeoIpHandler>>,
+    /// The reference `SecurityConfig.passive_mode` (`false` by default):
+    /// a country match logs only - no `403` answer, the reference
+    /// ip-security geo path's passive behavior.
+    pub passive_mode: bool,
 }
 
 impl fmt::Debug for GeoStageConfig {
@@ -117,6 +122,7 @@ impl fmt::Debug for GeoStageConfig {
         f.debug_struct("GeoStageConfig")
             .field("gate", &self.gate)
             .field("handler", &self.handler.is_some())
+            .field("passive_mode", &self.passive_mode)
             .finish()
     }
 }
@@ -187,19 +193,28 @@ impl GeoStage {
         let handler = NoopHandler(self.config.handler.as_deref());
         if let Some(ip) = ip {
             let block = check_countries(ip, &self.config.gate, &handler, false)?;
-            return Some(Self::decision(block));
+            return self.answer(block);
         }
         // No client identity: the reference `_check_unknown_identity_access`
         // reading - a restrictive whitelist blocks the unidentifiable.
         if self.config.gate.whitelist_countries.is_empty() {
             return None;
         }
-        Some(Self::decision(CountryBlock {
+        self.answer(CountryBlock {
             country: None,
             // `ip` in the reference reason is the UNKNOWN_CLIENT_IDENTITY
             // sentinel string.
             reason: generic_list_block_reason_for(UNKNOWN_CLIENT_IP),
-        }))
+        })
+    }
+
+    /// The block answer, or `None` under passive mode: the reference's
+    /// passive geo path logs the country match and lets the request pass.
+    fn answer(&self, block: CountryBlock) -> Option<GeoDecision> {
+        if self.config.passive_mode {
+            return None;
+        }
+        Some(Self::decision(block))
     }
 
     const fn decision(block: CountryBlock) -> GeoDecision {
@@ -370,6 +385,7 @@ mod tests {
                 ("192.0.2.1".to_owned(), "RU"),
                 ("192.0.2.2".to_owned(), "DE"),
             ])))),
+            passive_mode: false,
         })
     }
 
@@ -377,6 +393,7 @@ mod tests {
         GeoStage::new(GeoStageConfig {
             gate: parse_country_lists(["US"], [] as [&str; 0]),
             handler: Some(Arc::new(Fixed("DE"))),
+            passive_mode: false,
         })
     }
 
@@ -405,12 +422,34 @@ mod tests {
         let stage = GeoStage::new(GeoStageConfig {
             gate: parse_country_lists(["US"], [] as [&str; 0]),
             handler: None,
+            passive_mode: false,
         });
         let decision = stage.decide(Some(ip("192.0.2.1")), None).expect("blocked");
         assert_eq!(
             decision.block.reason,
             "IP 192.0.2.1 not in global allowlist/blocklist"
         );
+    }
+
+    #[test]
+    fn passive_mode_answers_nothing_for_a_country_match() {
+        let stage = GeoStage::new(GeoStageConfig {
+            gate: parse_country_lists([] as [&str; 0], ["RU"]),
+            handler: Some(Arc::new(Table(HashMap::from([(
+                "192.0.2.1".to_owned(),
+                "RU",
+            )])))),
+            passive_mode: true,
+        });
+        // Both the resolved-country block and the unknown-identity
+        // whitelist block pass through under passive mode.
+        assert!(stage.decide(Some(ip("192.0.2.1")), None).is_none());
+        let whitelist = GeoStage::new(GeoStageConfig {
+            gate: parse_country_lists(["US"], [] as [&str; 0]),
+            handler: None,
+            passive_mode: true,
+        });
+        assert!(whitelist.decide(None, None).is_none());
     }
 
     #[test]

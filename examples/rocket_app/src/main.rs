@@ -48,6 +48,7 @@ fn rocket() -> _ {
             ..RateLimitConfig::default()
         },
         ip_ban: IpBanConfig::default(),
+        passive_mode: false,
     })
     .expect("valid stage config");
 

@@ -125,11 +125,9 @@ pub struct ThreatBanEntry {
 /// The IP-banning knobs (the reference `enable_ip_banning` /
 /// `auto_ban_threshold` / `auto_ban_duration` / `threat_ban_config` group).
 ///
-/// Default is the opt-in pair: banning off (`false`, so a stage upgrade
-/// never starts banning uninvited - note the Python `SecurityConfig`
-/// defaults `enable_ip_banning` to `true`; the Rust family pins the
-/// conservative `false` like the Go port does) with the reference
-/// thresholds for when it is turned on.
+/// The defaults are the reference `SecurityConfig` defaults: banning on
+/// (`enable_ip_banning = true`, `guard_core/_security_config_fields.py`)
+/// with the reference threshold/duration pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IpBanConfig {
     /// `enable_ip_banning`. `false` makes every ban resolution a no-op;
@@ -149,7 +147,7 @@ pub struct IpBanConfig {
 impl Default for IpBanConfig {
     fn default() -> Self {
         Self {
-            enable_ip_banning: false,
+            enable_ip_banning: true,
             auto_ban_threshold: DEFAULT_AUTO_BAN_THRESHOLD,
             auto_ban_duration: DEFAULT_AUTO_BAN_DURATION,
             threat_ban_config: HashMap::new(),
@@ -731,9 +729,9 @@ mod tests {
     }
 
     #[test]
-    fn default_config_is_off_with_reference_thresholds() {
+    fn default_config_matches_the_reference() {
         let config = IpBanConfig::default();
-        assert!(!config.enable_ip_banning);
+        assert!(config.enable_ip_banning);
         assert_eq!(config.auto_ban_threshold, 10);
         assert_eq!(config.auto_ban_duration, 3600);
         assert!(config.threat_ban_config.is_empty());
@@ -1156,7 +1154,10 @@ mod tests {
         let manager = IpBanManager::new();
         let counters = ViolationCounters::new();
         let attacker = ip("192.0.2.9");
-        let config = IpBanConfig::default();
+        let config = IpBanConfig {
+            enable_ip_banning: false,
+            ..IpBanConfig::default()
+        };
 
         for _ in 0..(config.auto_ban_threshold + 5) {
             assert!(

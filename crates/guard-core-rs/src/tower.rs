@@ -56,9 +56,12 @@
 //! - The endpoint-rate-limit tier (`endpoint_rate_limits`, route decorators,
 //!   geo tiers) is not ported; the stage runs the global per-IP window only,
 //!   the reference pipeline's default tier.
-//! - The reference's `passive_mode` has no counterpart in the Rust config
-//!   surface yet: when the family ports it, the stage must answer nothing
-//!   and feed nothing under it.
+//! - **Passive mode**: `passive_mode` (the reference `SecurityConfig`
+//!   flag, default `false`) turns every block answer into log-only
+//!   behavior: the sliding window and the violation counters still record,
+//!   but no `403`/`429` is rendered and the auto-ban feeds are suppressed
+//!   (the reference's passive paths skip `_record_rate_limit_autoban`,
+//!   `_try_threshold_ban`, and `escalate_identity_violation`).
 //! - A detection threat that does not cross a ban threshold passes through
 //!   here; the reference's `400 "Suspicious activity detected"` answer
 //!   belongs to the suspicious-activity stage, which has no tower
@@ -84,6 +87,7 @@
 //!         ..RateLimitConfig::default()
 //!     },
 //!     ip_ban: IpBanConfig::default(),
+//!     passive_mode: false,
 //! })
 //! .expect("valid stage config");
 //! let visitor = IpAddr::from_str("192.0.2.1").unwrap();
@@ -185,12 +189,13 @@ pub struct StageResponse {
     pub retry_after: Option<u64>,
 }
 
-/// The stage knobs: the two stateful configs the reference pipeline reads.
+/// The stage knobs: the two stateful configs the reference pipeline reads,
+/// plus the passive-mode switch.
 ///
-/// They are exactly the surface the stateful modules shipped. The default
-/// value is the opt-in pair (both engines off, reference thresholds), so a
-/// stage built from [`RateLimitStageConfig::default`] passes everything
-/// through.
+/// The config defaults are the reference `SecurityConfig` defaults: rate
+/// limiting and IP banning both on, with the reference thresholds, so a
+/// stage built from [`RateLimitStageConfig::default`] throttles at 10
+/// requests per 60 s window per client IP.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RateLimitStageConfig {
     /// The rate-limiting knobs (`enable_rate_limiting`, `rate_limit`,
@@ -199,6 +204,11 @@ pub struct RateLimitStageConfig {
     /// The auto-ban knobs (`enable_ip_banning`, `auto_ban_threshold`,
     /// `auto_ban_duration`, `threat_ban_config`).
     pub ip_ban: IpBanConfig,
+    /// The reference `SecurityConfig.passive_mode` (`false` by default):
+    /// log-only mode. The stage still records windows and violation
+    /// counts, but renders no block answer and runs no auto-ban feed,
+    /// exactly the reference's passive paths.
+    pub passive_mode: bool,
 }
 
 /// An invalid stage config: the error [`RateLimitStage::new`] fails closed
@@ -365,6 +375,11 @@ impl RateLimitStage {
     /// is_exempt`), then the detection feed (skipped for `is_whitelisted`
     /// only, since a throttled request never reaches the suspicious-activity
     /// stage in the reference).
+    ///
+    /// Under [`RateLimitStageConfig::passive_mode`] the observations still
+    /// happen (the window records, the detection categories count) but no
+    /// block answer is rendered and the auto-ban feeds are suppressed: the
+    /// reference's passive paths return `None` where they would block.
     pub fn decide(
         &self,
         ip: Option<IpAddr>,
@@ -372,8 +387,9 @@ impl RateLimitStage {
         finding: Option<&ThreatFinding>,
     ) -> Option<StageResponse> {
         let ip = ip?;
+        let passive = self.config.passive_mode;
 
-        if self.bans.is_banned(ip) {
+        if self.bans.is_banned(ip) && !passive {
             return Some(StageResponse {
                 status: StatusCode::FORBIDDEN,
                 body: BANNED_BODY,
@@ -386,7 +402,7 @@ impl RateLimitStage {
 
         if !skip_rate_limit {
             let decision = self.limiter.check(ip, None);
-            if !decision.allowed {
+            if !decision.allowed && !passive {
                 // The crossing feeds the auto-ban engine with the
                 // `rate_limit` pseudo-category; the 429 still goes out (the
                 // reference returns the limit response either way) and the
@@ -413,7 +429,12 @@ impl RateLimitStage {
 
         if let Some(finding) = finding.filter(|finding| finding.is_threat && !whitelisted) {
             let categories: Vec<&str> = finding.categories.iter().map(String::as_str).collect();
-            if self
+            if passive {
+                // Log-only: the categories still count (the reference's
+                // `_increment_suspicious_counts` runs either way) but the
+                // threshold ban and the block answer are suppressed.
+                self.counters.record(ip, &categories);
+            } else if self
                 .bans
                 .register_violations(
                     &self.counters,
@@ -638,6 +659,7 @@ mod tests {
                     ..RateLimitConfig::default()
                 },
                 ip_ban: IpBanConfig::default(),
+                passive_mode: false,
             },
             clock,
         )
@@ -656,18 +678,42 @@ mod tests {
     }
 
     #[test]
-    fn default_stage_passes_everything_through() {
+    fn default_stage_throttles_at_the_reference_threshold() {
         let stage = RateLimitStage::new(RateLimitStageConfig::default()).expect("default config");
-        for n in 0..100 {
-            assert!(
-                stage
-                    .decide(Some(ip(&format!("192.0.2.{n}"))), None, None)
-                    .is_none(),
-                "request {n} must pass"
-            );
+        let visitor = ip("192.0.2.0");
+        // The reference defaults: 10 requests per 60 s window per IP, so
+        // the first ten pass and the eleventh is throttled.
+        for _ in 0..10 {
+            assert!(stage.decide(Some(visitor), None, None).is_none());
         }
-        assert_eq!(stage.limiter().tracked_windows(), 0, "nothing recorded");
-        assert_eq!(stage.counters().tracked_ips(), 0, "nothing counted");
+        let throttled = stage.decide(Some(visitor), None, None).expect("throttled");
+        assert_eq!(throttled.status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(stage.limiter().tracked_windows(), 1);
+        assert_eq!(stage.counters().tracked_ips(), 0, "no autoban feed");
+    }
+
+    #[test]
+    fn default_ip_ban_config_resolves_threshold_bans() {
+        // The reference defaults enable banning: enough recorded violations
+        // from one IP cross the flat threshold and ban it.
+        let stage = RateLimitStage::new(RateLimitStageConfig::default()).expect("default config");
+        let attacker = ip("192.0.2.1");
+        let finding = ThreatFinding {
+            is_threat: true,
+            categories: vec!["sqli".to_owned()],
+            trigger_info: "probe".to_owned(),
+        };
+        for _ in 1..stage.config().ip_ban.auto_ban_threshold {
+            assert!(stage.decide(Some(attacker), None, Some(&finding)).is_none());
+        }
+        // The violation that reaches the flat threshold bans and answers
+        // with the crossing-ban shape on the same request.
+        assert_crossing_ban_shape(
+            stage
+                .decide(Some(attacker), None, Some(&finding))
+                .expect("threshold crossed"),
+        );
+        assert!(stage.bans().is_banned(attacker));
     }
 
     #[test]
@@ -795,6 +841,7 @@ mod tests {
                     auto_ban_threshold: 1,
                     ..IpBanConfig::default()
                 },
+                passive_mode: false,
             },
             fake.clock(),
         );
@@ -844,7 +891,11 @@ mod tests {
                     enable_rate_limit_auto_ban: true,
                     ..RateLimitConfig::default()
                 },
-                ip_ban: IpBanConfig::default(),
+                ip_ban: IpBanConfig {
+                    enable_ip_banning: false,
+                    ..IpBanConfig::default()
+                },
+                passive_mode: false,
             },
             fake.clock(),
         );
@@ -884,6 +935,7 @@ mod tests {
                     ))
                     .collect(),
                 },
+                passive_mode: false,
             },
             fake.clock(),
         );
@@ -937,6 +989,7 @@ mod tests {
                     ))
                     .collect(),
                 },
+                passive_mode: false,
             },
             fake.clock(),
         );
@@ -977,6 +1030,7 @@ mod tests {
                 enable_ip_banning: true,
                 ..IpBanConfig::default()
             },
+            passive_mode: false,
         })
         .expect("valid config");
         let visitor = ip("192.0.2.3");
@@ -1027,6 +1081,60 @@ mod tests {
     }
 
     #[test]
+    fn passive_mode_records_but_never_blocks_or_feeds_the_autoban() {
+        let fake = FakeClock::default();
+        let stage = stage_with(
+            RateLimitStageConfig {
+                rate_limit: RateLimitConfig {
+                    enable_rate_limiting: true,
+                    rate_limit: 1,
+                    enable_rate_limit_auto_ban: true,
+                    ..RateLimitConfig::default()
+                },
+                ip_ban: IpBanConfig {
+                    enable_ip_banning: true,
+                    auto_ban_threshold: 1,
+                    ..IpBanConfig::default()
+                },
+                passive_mode: true,
+            },
+            fake.clock(),
+        );
+        let visitor = ip("192.0.2.30");
+        let attacker = ip("192.0.2.31");
+        let finding = ThreatFinding {
+            is_threat: true,
+            categories: vec!["sqli".to_owned()],
+            trigger_info: "probe".to_owned(),
+        };
+
+        // A live ban no longer answers: the reference's banned check logs
+        // and returns None under passive mode.
+        stage.bans().ban_ip(visitor, 60, "x").expect("ban");
+        assert!(stage.decide(Some(visitor), None, None).is_none());
+
+        // A rate-limit crossing still records the window but renders no
+        // 429 and runs no autoban feed (the reference skips
+        // `_record_rate_limit_autoban` under passive mode).
+        assert!(stage.decide(Some(attacker), None, None).is_none());
+        assert!(stage.decide(Some(attacker), None, None).is_none());
+        assert_eq!(stage.limiter().tracked_windows(), 2);
+        assert_eq!(stage.counters().tracked_ips(), 0);
+        assert!(!stage.bans().is_banned(attacker));
+
+        // A detection finding still counts its categories (the reference's
+        // `_increment_suspicious_counts` runs either way) but the threshold
+        // ban is suppressed and nothing is answered.
+        assert!(stage.decide(Some(attacker), None, Some(&finding)).is_none());
+        assert_eq!(
+            stage.counters().snapshot(attacker).get("sqli"),
+            Some(&1),
+            "the categories counted without banning"
+        );
+        assert!(!stage.bans().is_banned(attacker));
+    }
+
+    #[test]
     fn ipv4_mapped_ip_shares_the_ipv4_bucket() {
         let stage = throttling_stage(1, Arc::new(system_clock));
         assert!(
@@ -1049,6 +1157,7 @@ mod tests {
                 ..RateLimitConfig::default()
             },
             ip_ban: IpBanConfig::default(),
+            passive_mode: false,
         })
         .unwrap_err();
         assert_eq!(
@@ -1070,6 +1179,7 @@ mod tests {
                 auto_ban_threshold: 0,
                 ..IpBanConfig::default()
             },
+            passive_mode: false,
         })
         .unwrap_err();
         assert_eq!(
