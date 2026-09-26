@@ -120,9 +120,12 @@ fn append_form_body_values(mut values: Vec<BodyScanValue>, raw_body: &str) -> Ve
 }
 
 /// `appendFieldBodyValue`: one form/multipart field value. A value that parses
-/// as a JSON object or array is walked (leaf context gains the
-/// `:embedded_json` suffix) INSTEAD of being scanned raw, mirroring
-/// `_check_embedded_json_if_applicable` short-circuiting `_check_value_enhanced`.
+/// as a JSON object or array is walked first (leaf context gains the
+/// `:embedded_json` suffix) and the raw value is still scanned afterwards,
+/// exactly like `_check_embedded_json_if_applicable` running the walk and then
+/// `_check_value_enhanced` on the raw string: an attack can span the leaf
+/// boundaries and exist only in the raw text (guard-core #122's
+/// `body_raw_span_sqli_comment` vector).
 fn append_field_body_value(
     mut values: Vec<BodyScanValue>,
     text: &str,
@@ -130,7 +133,7 @@ fn append_field_body_value(
 ) -> Vec<BodyScanValue> {
     if let Some(root) = parse_ordered_json(text) {
         let walk_context = format!("{ctx}{}", crate::detect::EMBEDDED_JSON_LEAF_CONTEXT_SUFFIX);
-        return append_json_walk_entries(values, &root, &walk_context);
+        values = append_json_walk_entries(values, &root, &walk_context);
     }
     values.push(BodyScanValue::plain(text, ctx));
     values
@@ -562,6 +565,12 @@ mod tests {
                 (
                     "request_body:form_field:embedded_json".to_owned(),
                     "<script>alert(1)</script>".to_owned()
+                ),
+                // The raw value still scans after the clean walk (walk first,
+                // then raw: an attack can span the leaf boundaries).
+                (
+                    "request_body:form_field".to_owned(),
+                    "{\"a\":\"<script>alert(1)</script>\"}".to_owned()
                 ),
             ]
         );
