@@ -94,12 +94,9 @@ pub const MAX_TRACKED_RATE_LIMIT_KEYS: usize = 10_000;
 /// The rate-limiting knobs (the reference `enable_rate_limiting` /
 /// `rate_limit` / `rate_limit_window` / `enable_rate_limit_auto_ban` group).
 ///
-/// The engine defaults are the opt-in pair: rate limiting off (`false`,
-/// zero behavior change unless enabled - the adapters only install the stage
-/// when the config asks for it) with the reference thresholds for when it is
-/// turned on. Note the Python `SecurityConfig` defaults `enable_rate_limiting`
-/// to `true`; the Rust family pins the conservative `false` so an adapter
-/// upgrade never starts shedding traffic uninvited.
+/// The defaults are the reference `SecurityConfig` defaults: rate limiting
+/// on (`enable_rate_limiting = true`, `guard_core/_security_config_fields.py`)
+/// with the reference thresholds (10 requests / 60 s window).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RateLimitConfig {
     /// `enable_rate_limiting`. `false` makes every [`RateLimiter::check`]
@@ -119,7 +116,7 @@ pub struct RateLimitConfig {
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
-            enable_rate_limiting: false,
+            enable_rate_limiting: true,
             rate_limit: DEFAULT_RATE_LIMIT,
             rate_limit_window: DEFAULT_RATE_LIMIT_WINDOW,
             enable_rate_limit_auto_ban: false,
@@ -396,9 +393,9 @@ mod tests {
     }
 
     #[test]
-    fn default_config_is_off_with_reference_thresholds() {
+    fn default_config_matches_the_reference() {
         let config = RateLimitConfig::default();
-        assert!(!config.enable_rate_limiting);
+        assert!(config.enable_rate_limiting);
         assert_eq!(config.rate_limit, 10);
         assert_eq!(config.rate_limit_window, 60);
         assert!(!config.enable_rate_limit_auto_ban);
@@ -429,7 +426,11 @@ mod tests {
 
     #[test]
     fn disabled_limiter_allows_and_records_nothing() {
-        let limiter = RateLimiter::new(RateLimitConfig::default()).expect("default config");
+        let limiter = RateLimiter::new(RateLimitConfig {
+            enable_rate_limiting: false,
+            ..RateLimitConfig::default()
+        })
+        .expect("valid config");
         for _ in 0..50 {
             assert!(limiter.check(ip("192.0.2.1"), None).allowed);
         }

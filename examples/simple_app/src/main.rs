@@ -8,8 +8,8 @@
 //! |---|---|---|
 //! | `GET /health` | excluded | `200 ok`, served before the guard |
 //! | `GET /` | guarded | `200` greeting |
-//! | `GET /search?q=...` | guarded | `200`, or `403` when a query param trips the engine |
-//! | `POST /echo` | guarded | echoes the body, or `403`/`413` from the guard |
+//! | `GET /search?q=...` | guarded | `200`, or `400` when a query param trips the engine |
+//! | `POST /echo` | guarded | echoes the body, or `400`/`413` from the guard |
 //! | anything else | guarded | `404 not found` |
 //!
 //! The guard shim is the wiring an adapter performs: translate the native
@@ -23,7 +23,7 @@
 //!
 //! guard-core-rs currently ships the CPU-bound detection pipeline only:
 //! there is no rate limiter, ban manager, or Redis surface to drive, so the
-//! smoke surface is detection (403) and the body cap (413) alone.
+//! smoke surface is detection (400) and the body cap (413) alone.
 
 use std::convert::Infallible;
 use std::pin::Pin;
@@ -140,8 +140,9 @@ impl Service<Request<Incoming>> for BodyMapped {
 
 /// The guard shim: buffers the body, caps its size, then runs the engine's
 /// detection pipeline over the path, each query parameter value, and the
-/// body, each with its reference request context. A threat verdict becomes a
-/// `403`; an over-cap body becomes a `413`.
+/// body, each with its reference request context. A threat verdict becomes
+/// the reference's `400 "Suspicious activity detected"`; an over-cap body
+/// becomes a `413`.
 #[derive(Clone)]
 struct GuardService<R> {
     inner: R,
@@ -213,7 +214,9 @@ fn is_threat(content: &str, source: &str) -> bool {
 }
 
 fn block_response() -> Response<Full<Bytes>> {
-    json_response(StatusCode::FORBIDDEN, SUSPICIOUS_BODY)
+    // The reference shape: 400 "Suspicious activity detected"
+    // (suspicious_activity.py), not a 403.
+    json_response(StatusCode::BAD_REQUEST, SUSPICIOUS_BODY)
 }
 
 /// Splits a raw query string into percent-decoded values (keys are dropped).

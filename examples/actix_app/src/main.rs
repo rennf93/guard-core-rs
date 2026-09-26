@@ -49,6 +49,7 @@ async fn main() -> std::io::Result<()> {
             ..RateLimitConfig::default()
         },
         ip_ban: IpBanConfig::default(),
+        passive_mode: false,
     })
     .expect("valid stage config");
 

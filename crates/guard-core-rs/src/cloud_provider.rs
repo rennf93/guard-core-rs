@@ -55,6 +55,7 @@
 //! let stage = CloudProviderStage::new(CloudProviderStageConfig {
 //!     block_cloud_providers: parse_cloud_selectors(["AWS"]).expect("valid selectors"),
 //!     table,
+//!     passive_mode: false,
 //! });
 //!
 //! let decision = stage.decide(
@@ -112,6 +113,10 @@ pub struct CloudProviderStageConfig {
     /// [`CloudIpTable::set_provider_ranges`] (at startup, and from a
     /// background refresher through a shared clone).
     pub table: CloudIpTable,
+    /// The reference `SecurityConfig.passive_mode` (`false` by default):
+    /// a cloud-provider match logs only - no `403` answer, the reference
+    /// `CloudProviderCheck`'s passive path.
+    pub passive_mode: bool,
 }
 
 /// The cloud-provider blocking stage over one table and one selector list.
@@ -189,6 +194,11 @@ impl CloudProviderStage {
             .config
             .table
             .provider_details(ip, &self.config.block_cloud_providers);
+        if self.config.passive_mode {
+            // Log-only: the reference's passive path emits the block events
+            // and returns None.
+            return None;
+        }
         Some(CloudDecision {
             answer: StageResponse {
                 status: StatusCode::FORBIDDEN,
@@ -324,6 +334,19 @@ mod tests {
         CloudProviderStage::new(CloudProviderStageConfig {
             block_cloud_providers: parse_cloud_selectors(["AWS"]).expect("valid selectors"),
             table,
+            passive_mode: false,
+        })
+    }
+
+    fn passive_aws_stage() -> CloudProviderStage {
+        let table = CloudIpTable::default();
+        table
+            .set_provider_ranges("AWS", vec![("203.0.113.0/24".to_owned(), None)])
+            .expect("valid ranges");
+        CloudProviderStage::new(CloudProviderStageConfig {
+            block_cloud_providers: parse_cloud_selectors(["AWS"]).expect("valid selectors"),
+            table,
+            passive_mode: true,
         })
     }
 
@@ -357,6 +380,12 @@ mod tests {
             Some(("AWS".to_owned(), "203.0.113.0/24".to_owned()))
         );
         assert!(stage.decide(Some(ip("203.0.114.9")), None).is_none());
+    }
+
+    #[test]
+    fn passive_mode_answers_nothing_for_a_cloud_match() {
+        let stage = passive_aws_stage();
+        assert!(stage.decide(Some(ip("203.0.113.9")), None).is_none());
     }
 
     #[test]
@@ -404,6 +433,7 @@ mod tests {
             block_cloud_providers: parse_cloud_selectors(["GCP:!us-central1"])
                 .expect("valid selectors"),
             table,
+            passive_mode: false,
         });
         assert!(stage.decide(Some(ip("198.51.100.9")), None).is_none());
         assert!(stage.decide(Some(ip("198.51.101.9")), None).is_some());

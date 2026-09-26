@@ -62,6 +62,7 @@
 //! let stage = UserAgentStage::new(UserAgentStageConfig {
 //!     blocked_user_agents: UserAgentFilter::new(["sqlmap"]).expect("valid patterns"),
 //!     ip_ban: IpBanConfig::default(),
+//!     passive_mode: false,
 //! })
 //! .expect("valid config");
 //!
@@ -98,8 +99,8 @@ pub const USER_AGENT_BLOCKED_BODY: &str = "User-Agent not allowed";
 /// `escalate_identity_violation` trigger info).
 pub const USER_AGENT_BAN_REASON_PREFIX: &str = "Blocked user agent: ";
 
-/// The stage's knobs: the compiled global blocklist and the auto-ban config
-/// the ban feed runs under.
+/// The stage's knobs: the compiled global blocklist, the auto-ban config
+/// the ban feed runs under, and the passive-mode switch.
 #[derive(Debug, Clone, Default)]
 pub struct UserAgentStageConfig {
     /// The global `blocked_user_agents` patterns, compiled and validated.
@@ -108,6 +109,10 @@ pub struct UserAgentStageConfig {
     /// The auto-ban knobs (`enable_ip_banning`, `auto_ban_threshold`,
     /// `auto_ban_duration`, `threat_ban_config`).
     pub ip_ban: IpBanConfig,
+    /// The reference `SecurityConfig.passive_mode` (`false` by default):
+    /// a blocked agent logs only - no ban feed and no `403`, the
+    /// reference `UserAgentCheck`'s passive path.
+    pub passive_mode: bool,
 }
 
 /// How the stage learns a path's route-level blocklist
@@ -211,6 +216,11 @@ impl UserAgentStage {
             .and_then(|path| self.routes.as_ref().and_then(|routes| routes(path)))
             .is_some_and(|filter| filter.is_blocked(agent));
         if !route_blocked && !self.config.blocked_user_agents.is_blocked(agent) {
+            return None;
+        }
+        if self.config.passive_mode {
+            // Log-only: the reference's passive path emits the block events
+            // and returns None - no ban feed, no 403.
             return None;
         }
 
@@ -425,6 +435,7 @@ mod tests {
             blocked_user_agents: UserAgentFilter::new(patterns.iter().copied())
                 .expect("valid patterns"),
             ip_ban: IpBanConfig::default(),
+            passive_mode: false,
         })
         .expect("valid config")
     }
@@ -433,6 +444,7 @@ mod tests {
         UserAgentStage::builder(UserAgentStageConfig {
             blocked_user_agents: UserAgentFilter::new(["sqlmap"]).expect("valid pattern"),
             ip_ban,
+            passive_mode: false,
         })
         .clock(clock)
         .build()
@@ -452,6 +464,42 @@ mod tests {
 
     fn ip(text: &str) -> IpAddr {
         IpAddr::from_str(text).expect("test address")
+    }
+
+    #[test]
+    fn passive_mode_blocks_nothing_and_feeds_no_ban() {
+        let stage = UserAgentStage::builder(UserAgentStageConfig {
+            blocked_user_agents: UserAgentFilter::new(["sqlmap"]).expect("valid pattern"),
+            ip_ban: IpBanConfig {
+                enable_ip_banning: true,
+                auto_ban_threshold: 1,
+                ..IpBanConfig::default()
+            },
+            passive_mode: true,
+        })
+        .build()
+        .expect("valid config");
+        let attacker = ip("192.0.2.2");
+        for _ in 0..5 {
+            assert!(
+                stage
+                    .decide(
+                        Some(attacker),
+                        None,
+                        None,
+                        Some("sqlmap"),
+                        Some(&finding(&["sqli"]))
+                    )
+                    .is_none(),
+                "passive mode answers nothing for a blocked agent"
+            );
+        }
+        assert_eq!(
+            stage.counters().tracked_ips(),
+            0,
+            "the escalation ban feed is suppressed under passive mode"
+        );
+        assert!(!stage.bans().is_banned(attacker));
     }
 
     #[test]
@@ -536,6 +584,7 @@ mod tests {
         let stage = UserAgentStage::builder(UserAgentStageConfig {
             blocked_user_agents: UserAgentFilter::default(),
             ip_ban: IpBanConfig::default(),
+            passive_mode: false,
         })
         .routes(Arc::new(|path: &str| {
             (path == "/admin")
@@ -710,6 +759,7 @@ mod tests {
                 auto_ban_threshold: 0,
                 ..IpBanConfig::default()
             },
+            passive_mode: false,
         })
         .unwrap_err();
         assert_eq!(
@@ -727,6 +777,7 @@ mod tests {
         let stage = UserAgentStage::builder(UserAgentStageConfig {
             blocked_user_agents: UserAgentFilter::new(["sqlmap"]).expect("valid pattern"),
             ip_ban: IpBanConfig::default(),
+            passive_mode: false,
         })
         .ban_engine(bans.clone(), counters.clone())
         .build()

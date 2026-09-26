@@ -260,6 +260,7 @@ mod tests {
                 ..RateLimitConfig::default()
             },
             ip_ban: IpBanConfig::default(),
+            passive_mode: false,
         })
         .clock(clock)
         .build()
@@ -393,10 +394,12 @@ mod tests {
     }
 
     #[rocket::async_test]
-    async fn default_stage_passes_everything_through() {
+    async fn default_stage_throttles_at_the_reference_threshold() {
         let stage = RateLimitStage::new(RateLimitStageConfig::default()).expect("default config");
         let client = client_with(stage).await;
-        for _ in 0..25 {
+        // The reference defaults: rate limiting on, 10 requests per 60 s
+        // window per IP, so the first ten pass and the eleventh throttles.
+        for _ in 0..10 {
             let response = client
                 .get("/")
                 .remote(remote_of("192.0.2.5"))
@@ -404,6 +407,12 @@ mod tests {
                 .await;
             assert_eq!(response.status(), Status::Ok);
         }
+        let throttled = client
+            .get("/")
+            .remote(remote_of("192.0.2.5"))
+            .dispatch()
+            .await;
+        assert_eq!(throttled.status(), Status::TooManyRequests);
     }
 
     #[rocket::async_test]
@@ -491,6 +500,7 @@ mod tests {
                 auto_ban_threshold: 1,
                 ..IpBanConfig::default()
             },
+            passive_mode: false,
         })
         .clock(fake.clock())
         .build()

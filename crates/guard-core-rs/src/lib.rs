@@ -22,7 +22,7 @@
 //!   (403 "Forbidden", loopback exemption, whitelist-skip only)
 //! - [`tower`] - the rate-limit and dynamic IP ban pipeline stage as a
 //!   `tower::Layer` (429 throttled shape, 403 banned shapes, exempt-IP
-//!   handling, and the auto-ban feeds)
+//!   handling, the auto-ban feeds, and passive mode)
 //! - [`request_limits`] - the request size and content-type pipeline stage
 //!   as a `tower::Layer` (413 size shape, 415 content-type shape, fail-secure
 //!   500 on a junk content-length)

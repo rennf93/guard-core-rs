@@ -37,9 +37,9 @@ configuration and route-scoped guard configuration.
 |---|---|---|
 | `GET /health` | excluded | `200 ok` |
 | `GET /` | general | `200`, greeting text |
-| `GET /search?q=...` | general | `200`, or `403` on a threat |
-| `POST /echo` | general | echoes the body; `403`/`413` from the guard |
-| `GET /admin/stats` | admin (strict) | `200 stats`, or `403` on a threat |
+| `GET /search?q=...` | general | `200`, or `400` on a threat |
+| `POST /echo` | general | echoes the body; `400`/`413` from the guard |
+| `GET /admin/stats` | admin (strict) | `200 stats`, or `400` on a threat |
 | anything else | matching tree | `404 not found` |
 
 ## Not demonstrated (engine surface)
@@ -76,9 +76,9 @@ compose stack (on port 8080; set `SMOKE_PORT` to remap the host port):
 | `GET /` | `200` |
 | `GET /health` | `200` (excluded path) |
 | `GET /admin/stats` | `200` |
-| `GET /search?q=<script>alert(1)</script>` | `403`, body `{"detail":"Suspicious activity detected"}` |
+| `GET /search?q=<script>alert(1)</script>` | `400`, body `{"detail":"Suspicious activity detected"}` |
 | `GET /search?q=<img src=x onerror=alert(1)>` | `200` (borderline payload passes the general tree) |
-| `GET /admin/stats?q=<img src=x onerror=alert(1)>` | `403` (the stricter admin tree catches it) |
+| `GET /admin/stats?q=<img src=x onerror=alert(1)>` | `400` (the stricter admin tree catches it) |
 | `POST /echo` with a 70 KB body | `413`, body `{"detail":"Payload too large"}` (`GUARD_BODY_CAP=65536`) |
 | `POST /echo` with body `hello world` | `200`, body echoed |
 
