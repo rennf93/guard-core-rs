@@ -18,6 +18,9 @@
 //! - [`tower`] - the rate-limit and dynamic IP ban pipeline stage as a
 //!   `tower::Layer` (429 throttled shape, 403 banned shapes, exempt-IP
 //!   handling, and the auto-ban feeds)
+//! - [`request_limits`] - the request size and content-type pipeline stage
+//!   as a `tower::Layer` (413 size shape, 415 content-type shape, fail-secure
+//!   500 on a junk content-length)
 //!
 //! # Usage
 //!
@@ -38,6 +41,7 @@
 //! assert!(score > 0.0);
 //! ```
 
+pub mod request_limits;
 pub mod tower;
 
 pub use guard_core_engine::compiler;

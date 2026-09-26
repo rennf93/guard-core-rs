@@ -166,6 +166,49 @@ before the first `:`) to one of `query_param`, `header`, `url_path`,
 filters; embedded-JSON leaf contexts (a `:embedded_json` suffix) keep the
 suffix for validator scoping.
 
+## Request size and content-type limits (request_limits)
+
+The route-scoped size and content gate mirrors the reference engine's
+`request_size_content` check
+(`guard_core/core/checks/implementations/request_size_content.py`). The
+decision core is `guard_core_engine::request_limits::decide`; the tower stage
+is `guard_core_rs::request_limits::RequestLimitsStageLayer`.
+
+Both limits are route config in the reference (`RouteConfig.max_request_size`,
+`RouteConfig.allowed_content_types`); there is no global knob, so the Rust
+`ContentLimits` carries both as `Option` and the all-`None` default is inert:
+
+| Field | Type | Default | Reference knob |
+|---|---|---|---|
+| `max_request_size` | `Option<u64>` | `None` | `RouteConfig.max_request_size` (bytes) |
+| `allowed_content_types` | `Option<Vec<String>>` | `None` | `RouteConfig.allowed_content_types` |
+
+Behavior, in the reference's order:
+
+- **Size first**: a missing or empty `content-length` header passes; a value
+  at or under the limit passes; one over answers `413 "Request too large"`
+  (reason `Request size {n} exceeds limit: {max}`). The parse mirrors
+  Python's `int()`: surrounding whitespace and a leading sign are accepted,
+  and a negative value passes (`-1 <= limit`).
+- **Then the media type**: the exact prefix before the first `;` (no trim,
+  case-sensitive) must be in `allowed_content_types`, else
+  `415 "Unsupported content type"`. A missing `content-type` header compares
+  as the empty string and is blocked by any non-empty allowed list, exactly
+  as in Python.
+- **Fail-secure**: a non-integer `content-length` header mirrors the
+  reference's `int()` `ValueError`: `decide` returns `Err`, and the tower
+  service answers the pipeline's fail-secure shape
+  `500 "Security check failed"` (`fail_secure = True` default).
+
+The stage learns a path's limits through a `RouteLimitsResolver`
+(`path -> Option<ContentLimits>`, the tower counterpart of the reference's
+`request.state.route_config`); an unconfigured path passes.
+
+Not mirrored: the reference's `EVENT_CONTENT_FILTERED` events, `log_activity`
+entries, `passive_mode` (no Rust config surface yet), the `on_block` hook,
+and `custom_error_responses` body overrides. The decision core returns the
+reference reason strings for adapters that log.
+
 ## The tower stage (guard_core_rs::tower)
 
 The facade crate carries the first pipeline stage: a `tower::Layer`
@@ -255,10 +298,11 @@ The port targets spec 4.0.2 and is not complete. Do not expect these yet:
   07-12): no `SecurityConfig`, no middleware protocol, no handlers,
   protocols, or decorators. The global IP gate (`whitelist`, `blacklist`,
   `exempt_ips`) exists (`ip_gate`), the in-memory rate limiter and dynamic
-  IP ban store exist (`rate_limit`, `ip_ban`), and the rate-limit/ban
+  IP ban store exist (`rate_limit`, `ip_ban`), the rate-limit/ban
   pipeline stage exists for tower stacks (`guard_core_rs::tower`) and as
   example wirings for actix-web and Rocket (`examples/actix_app`,
-  `examples/rocket_app`), but there
+  `examples/rocket_app`), and the route-scoped request size/content gate
+  exists (`request_limits`), but there
   is no Redis-backed distributed mode, no cloud provider blocking, no
   user-agent filtering, and no response factory; the remaining pipeline
   stages and the published framework adapters live in the adapter repos.
