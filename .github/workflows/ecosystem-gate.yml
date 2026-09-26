@@ -37,25 +37,38 @@ jobs:
       fail-fast: false
       matrix:
         consumer:
+          # TEMPORARY companion pins: this engine PR changes DetectConfig, so
+          # each consumer must be tested at its companion branch until the
+          # matching adapter PR merges; empty them back to '' right after
+          # (the same moving-pin dance the sibling repos' CI does for this
+          # engine).
           - repo: rennf93/actix-guard-rs
             path: actix-guard-rs
+            test_ref: feat/body-value-extraction
             # Extra sibling checkout the consumer needs besides this engine.
             extra_repo: ''
             extra_path: ''
+            extra_ref: ''
           - repo: rennf93/axum-guard-rs
             path: axum-guard-rs
+            test_ref: feat/body-value-extraction-docs
             # axum-guard-rs consumes tower-guard-rs as a sibling path
             # dependency, which itself consumes this engine.
             extra_repo: rennf93/tower-guard-rs
             extra_path: tower-guard-rs
+            extra_ref: feat/body-value-extraction
           - repo: rennf93/rocket-guard-rs
             path: rocket-guard-rs
+            test_ref: feat/body-value-extraction
             extra_repo: ''
             extra_path: ''
+            extra_ref: ''
           - repo: rennf93/tower-guard-rs
             path: tower-guard-rs
+            test_ref: feat/body-value-extraction
             extra_repo: ''
             extra_path: ''
+            extra_ref: ''
 
     steps:
       - name: Checkout guard-core-rs
@@ -68,7 +81,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ matrix.consumer.repo }}
-          ref: ${{ github.event.inputs.consumer_ref }}
+          ref: ${{ github.event.inputs.consumer_ref || matrix.consumer.test_ref || '' }}
           path: ${{ matrix.consumer.path }}
           persist-credentials: false
 
@@ -77,7 +90,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ matrix.consumer.extra_repo }}
-          ref: master
+          ref: ${{ matrix.consumer.extra_ref || 'master' }}
           path: ${{ matrix.consumer.extra_path }}
           persist-credentials: false
 

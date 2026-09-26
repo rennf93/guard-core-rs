@@ -47,7 +47,7 @@ pub fn match_is_binary_density(
 }
 
 #[must_use]
-fn is_binary_artifact(c: char) -> bool {
+pub(crate) fn is_binary_artifact(c: char) -> bool {
     let cp = c as u32;
     // control characters (except tab/LF/CR) and DEL
     if (cp < 0x20 && !matches!(cp, 0x09 | 0x0A | 0x0D)) || cp == 0x7F {
