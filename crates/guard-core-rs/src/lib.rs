@@ -15,6 +15,9 @@
 //!   whitespace collapsing, and attack-preserving truncation
 //! - [`semantic`] - token extraction, Shannon entropy, encoding layer detection, attack probability
 //!   scoring, obfuscation detection, code injection risk analysis, and aggregate threat scoring
+//! - [`cloud_provider`] - the cloud-provider blocking pipeline stage as a
+//!   `tower::Layer` (403 "Cloud provider IP not allowed", region
+//!   carve-outs, skip-state aware)
 //! - [`tower`] - the rate-limit and dynamic IP ban pipeline stage as a
 //!   `tower::Layer` (429 throttled shape, 403 banned shapes, exempt-IP
 //!   handling, and the auto-ban feeds)
@@ -45,6 +48,7 @@
 //! assert!(score > 0.0);
 //! ```
 
+pub mod cloud_provider;
 pub mod headers_auth;
 pub mod request_limits;
 pub mod tower;
