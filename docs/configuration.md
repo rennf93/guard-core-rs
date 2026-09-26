@@ -38,9 +38,8 @@ deny path of its own and never opens the whitelist gate: with a restrictive
 whitelist, an exempt IP that is not itself whitelisted is still denied. The
 stateful stages below (rate limiting, violation counting, dynamic bans) skip
 exactly what the reference skips for a whitelist match
-(`is_whitelisted || is_exempt`) and never skip penetration detection; a
-stage that lands later (user-agent filter, cloud-provider blocker) must
-follow the same rule.
+(`is_whitelisted || is_exempt`) and never skip penetration detection; the
+user-agent filter below follows the same rule.
 
 ## Rate limiting (rate_limit)
 
@@ -208,6 +207,53 @@ Not mirrored: the reference's `EVENT_CONTENT_FILTERED` events, `log_activity`
 entries, `passive_mode` (no Rust config surface yet), the `on_block` hook,
 and `custom_error_responses` body overrides. The decision core returns the
 reference reason strings for adapters that log.
+## Blocked user agents (user_agent)
+
+The user-agent filter mirrors the reference engine's `user_agent` check
+(`guard_core/core/checks/implementations/user_agent.py`) and its matcher
+(`_user_agent_matches_blocked_pattern` / `is_user_agent_allowed`). The
+decision core is `guard_core_engine::user_agent::UserAgentFilter`; the tower
+stage is `guard_core_rs::user_agent::UserAgentStageLayer`.
+
+The config knob is the reference `blocked_user_agents` list, where every
+entry is a regular expression:
+
+| Field | Type | Default | Reference knob |
+|---|---|---|---|
+| `UserAgentStageConfig.blocked_user_agents` | `UserAgentFilter` (compiled `blocked_user_agents`) | empty, never blocks | `SecurityConfig.blocked_user_agents` |
+| `UserAgentStageConfig.ip_ban` | `IpBanConfig` | off | `enable_ip_banning` + thresholds |
+
+Behavior:
+
+- **Matching**: the `User-Agent` header value is truncated to its first 512
+  code points (`_MAX_USER_AGENT_MATCH_LENGTH`) and tested against every
+  pattern with search semantics under the reference compiler's
+  case-insensitive + multiline flags; any match blocks. A missing header
+  reads as the empty string.
+- **Validation**: `UserAgentFilter::new` fails closed on a pattern the ReDoS
+  validator rejects (`_validate_blocked_user_agents_value` raises the same
+  way) and, diverging earlier, on a pattern the regex engine cannot compile
+  (the reference would raise at request time and trip the fail-secure 500).
+- **Skip state**: the stage passes for `is_whitelisted \|\| is_exempt`, read
+  from an `IpGateDecision` request extension.
+- **Route lists**: the reference tries `route_config.blocked_user_agents`
+  before the global list; the builder's `routes` seam resolves a path to a
+  compiled per-route filter (same route seam as `request_limits`).
+- **The block shape**: `403 "User-Agent not allowed"`, answered even without
+  a client IP.
+- **The ban feed**: a block runs the reference's
+  `escalate_identity_violation` shape - only a `ThreatFinding` request
+  extension marked `is_threat` counts (empty categories record
+  `uncategorized`), feeding `register_violations` under reason
+  `Blocked user agent: <truncated user agent>` with the stage's
+  `IpBanConfig`. The 403 goes out either way; the ban answers the next
+  request. The builder's `ban_engine` seam shares the
+  `IpBanManager`/`ViolationCounters` pair with the rate-limit stage (the
+  reference's module-singleton); without it the stage holds a private pair.
+
+Not mirrored: `log_activity`/event emissions, `passive_mode` (no Rust config
+surface yet), and the `log_sensitive_*` redaction of the user agent in
+reasons.
 
 ## The tower stage (guard_core_rs::tower)
 
@@ -305,6 +351,10 @@ The port targets spec 4.0.2 and is not complete. Do not expect these yet:
   exists (`request_limits`), but there
   is no Redis-backed distributed mode, no cloud provider blocking, no
   user-agent filtering, and no response factory; the remaining pipeline
+  `examples/rocket_app`), and the user-agent filter exists (`user_agent`),
+  but there
+  is no Redis-backed distributed mode, no cloud provider blocking, and no
+  response factory; the remaining pipeline
   stages and the published framework adapters live in the adapter repos.
 - **`PerformanceMonitor`** and per-scan timeouts, plus a handful of tracked
   detection knobs recorded as unmapped with reasons.

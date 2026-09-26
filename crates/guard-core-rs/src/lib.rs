@@ -43,6 +43,7 @@
 
 pub mod request_limits;
 pub mod tower;
+pub mod user_agent;
 
 pub use guard_core_engine::compiler;
 pub use guard_core_engine::detect;
