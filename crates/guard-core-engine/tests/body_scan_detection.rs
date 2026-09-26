@@ -223,6 +223,27 @@ fn form_field_value_detected_with_the_form_field_context() {
     assert!(categories(&verdict).contains(&"recon"));
 }
 
+#[test]
+fn raw_span_sqli_comment_detected_after_clean_embedded_walk() {
+    // The embedded JSON walk is clean, but the raw field text carries a
+    // SQLi comment spanning the leaf boundary (`x/*` + `*/SELECT`). The
+    // reference scans the walk leaves and then still scans the raw value
+    // (`_check_embedded_json_if_applicable` followed by
+    // `_check_value_enhanced`), so the extractor must hand the scan loop
+    // both surfaces (parity with guard-core #122's body-surface vector
+    // `body_raw_span_sqli_comment`).
+    let verdict = scan_body(
+        "q=%7B%22a%22%3A%22x%2F*%22%2C%22b%22%3A%22*%2FSELECT%22%7D",
+        "application/x-www-form-urlencoded",
+        &corpus_config(),
+    );
+    assert!(
+        verdict.is_threat,
+        "an attack spanning the raw text of a JSON-parsing field value must detect"
+    );
+    assert!(categories(&verdict).contains(&"sqli"));
+}
+
 // --- multipart parts ---
 
 #[test]
