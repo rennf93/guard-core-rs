@@ -21,6 +21,10 @@
 //! - [`request_limits`] - the request size and content-type pipeline stage
 //!   as a `tower::Layer` (413 size shape, 415 content-type shape, fail-secure
 //!   500 on a junk content-length)
+//! - [`headers_auth`] - the required-headers and authentication pipeline
+//!   stage as a `tower::Layer` (dynamic 400 required-header shapes, fixed
+//!   401 authentication shape, route rules with a global verifier
+//!   fallback)
 //!
 //! # Usage
 //!
@@ -41,6 +45,7 @@
 //! assert!(score > 0.0);
 //! ```
 
+pub mod headers_auth;
 pub mod request_limits;
 pub mod tower;
 pub mod user_agent;
