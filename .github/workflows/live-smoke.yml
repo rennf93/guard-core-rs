@@ -65,20 +65,20 @@ jobs:
           # Penetration detection: XSS payload in a query parameter is blocked.
           code=$(curl -sS --max-time 10 -o /tmp/smoke_body -w '%{http_code}' \
             -G "$base/search" --data-urlencode 'q=<script>alert(1)</script>')
-          if [ "$code" != "403" ]; then
-            echo "FAIL: XSS query param (expected 403, got $code)"; exit 1
+          if [ "$code" != "400" ]; then
+            echo "FAIL: XSS query param (expected 400, got $code)"; exit 1
           fi
           grep -q "Suspicious activity detected" /tmp/smoke_body || { echo "FAIL: suspicious body"; exit 1; }
-          echo "ok: XSS query param -> 403 suspicious block"
+          echo "ok: XSS query param -> 400 suspicious block"
 
           # Penetration detection: traversal in the path view.
           code=$(curl -sS --max-time 10 --path-as-is -o /tmp/smoke_body -w '%{http_code}' \
             "$base/files/../../etc/passwd")
-          if [ "$code" != "403" ]; then
-            echo "FAIL: path traversal (expected 403, got $code)"; exit 1
+          if [ "$code" != "400" ]; then
+            echo "FAIL: path traversal (expected 400, got $code)"; exit 1
           fi
           grep -q "Suspicious activity detected" /tmp/smoke_body || { echo "FAIL: traversal body"; exit 1; }
-          echo "ok: path traversal -> 403 suspicious block"
+          echo "ok: path traversal -> 400 suspicious block"
 
           # Body cap: a body over the buffering cap is rejected with 413
           # instead of being forwarded unscanned.
@@ -155,11 +155,11 @@ jobs:
           # exist in this port; the example fixes the default block body).
           code=$(curl -sS --max-time 10 -o /tmp/smoke_body_adv -w '%{http_code}' \
             -G "$base/search" --data-urlencode 'q=<script>alert(1)</script>')
-          if [ "$code" != "403" ]; then
-            echo "FAIL: XSS query param (expected 403, got $code)"; exit 1
+          if [ "$code" != "400" ]; then
+            echo "FAIL: XSS query param (expected 400, got $code)"; exit 1
           fi
           grep -q "Suspicious activity detected" /tmp/smoke_body_adv || { echo "FAIL: suspicious body"; exit 1; }
-          echo "ok: XSS query param -> 403 suspicious block"
+          echo "ok: XSS query param -> 400 suspicious block"
 
           # Route-scoped strictness: a borderline payload (an img onerror
           # handler) passes the general tree but is caught by the stricter
@@ -167,11 +167,11 @@ jobs:
           check "GET /search borderline payload" 200 -G "$base/search" --data-urlencode 'q=<img src=x onerror=alert(1)>'
           code=$(curl -sS --max-time 10 -o /tmp/smoke_body_adv -w '%{http_code}' \
             -G "$base/admin/stats" --data-urlencode 'q=<img src=x onerror=alert(1)>')
-          if [ "$code" != "403" ]; then
-            echo "FAIL: borderline payload on admin tree (expected 403, got $code)"; exit 1
+          if [ "$code" != "400" ]; then
+            echo "FAIL: borderline payload on admin tree (expected 400, got $code)"; exit 1
           fi
           grep -q "Suspicious activity detected" /tmp/smoke_body_adv || { echo "FAIL: admin borderline body"; exit 1; }
-          echo "ok: borderline payload -> 200 general, 403 admin"
+          echo "ok: borderline payload -> 200 general, 400 admin"
 
           # Body cap from the environment: GUARD_BODY_CAP=65536 in compose,
           # so a 70 KB body is rejected with 413.
