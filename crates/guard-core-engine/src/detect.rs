@@ -39,6 +39,11 @@ pub struct DetectConfig {
     pub semantic_threshold: f64,
     /// `detection_threat_score_threshold`.
     pub threat_score_threshold: f64,
+    /// `detection_binary_min_run_length` (reference bounds 4..=1024, default
+    /// 16): minimum code-point length a printable run inside a binary-dense
+    /// multipart file-part payload must reach before the run is handed to the
+    /// pattern scan (see [`crate::binary_islands`]).
+    pub binary_min_run_length: usize,
 }
 
 /// One threat, regex or semantic, exactly as the reference emits it.
@@ -302,6 +307,7 @@ mod tests {
             preserve_attack_patterns: true,
             semantic_threshold: 0.7,
             threat_score_threshold: 1.0,
+            binary_min_run_length: 16,
         }
     }
 

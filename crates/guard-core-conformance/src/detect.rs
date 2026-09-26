@@ -24,6 +24,10 @@ pub fn detect(content: &str, request_context: &str, knobs: &Knobs) -> Verdict {
         preserve_attack_patterns: knobs.preserve_attack_patterns,
         semantic_threshold: knobs.semantic_threshold,
         threat_score_threshold: knobs.threat_score_threshold,
+        // The corpus is pinned at spec 4.0.3, before
+        // `detection_binary_min_run_length` existed; the reference default
+        // applies and body extraction is not part of the recorded surface.
+        binary_min_run_length: 16,
     };
     let verdict = detect::detect(content, request_context, &config);
 

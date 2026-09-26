@@ -28,6 +28,7 @@ const fn corpus_config() -> DetectConfig {
         preserve_attack_patterns: true,
         semantic_threshold: 0.7,
         threat_score_threshold: 1.0,
+        binary_min_run_length: 16,
     }
 }
 

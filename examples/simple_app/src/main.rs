@@ -52,6 +52,7 @@ const DEFAULT_CONFIG: DetectConfig = DetectConfig {
     preserve_attack_patterns: true,
     semantic_threshold: 0.7,
     threat_score_threshold: 1.0,
+    binary_min_run_length: 16,
 };
 
 /// Block response bodies, matching the reference engine's default messages.

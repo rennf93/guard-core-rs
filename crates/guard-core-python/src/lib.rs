@@ -253,6 +253,8 @@ fn batch_threat_scores(py: Python<'_>, contents: Vec<String>, max_length: usize)
 ///     `detection_semantic_threshold` (default 0.7).
 /// threat_score_threshold : float, optional
 ///     `detection_threat_score_threshold` (default 1.0).
+/// binary_min_run_length : int, optional
+///     `detection_binary_min_run_length` (default 16).
 ///
 /// Returns
 /// -------
@@ -261,7 +263,7 @@ fn batch_threat_scores(py: Python<'_>, contents: Vec<String>, max_length: usize)
 ///     original_length, processed_length. Threat positions are Unicode
 ///     code-point indices into the scanned view (Python str index space).
 #[pyfunction]
-#[pyo3(signature = (content, request_context, max_content_length=10_000, max_full_scan_bytes=262_144, preserve_attack_patterns=true, semantic_threshold=0.7, threat_score_threshold=1.0))]
+#[pyo3(signature = (content, request_context, max_content_length=10_000, max_full_scan_bytes=262_144, preserve_attack_patterns=true, semantic_threshold=0.7, threat_score_threshold=1.0, binary_min_run_length=16))]
 #[allow(clippy::too_many_arguments)] // PyO3 boundary: one argument per spec knob
 fn detect_verdict(
     py: Python<'_>,
@@ -272,6 +274,7 @@ fn detect_verdict(
     preserve_attack_patterns: bool,
     semantic_threshold: f64,
     threat_score_threshold: f64,
+    binary_min_run_length: usize,
 ) -> PyResult<Py<PyDict>> {
     let config = guard_core_engine::detect::DetectConfig {
         max_content_length,
@@ -279,6 +282,7 @@ fn detect_verdict(
         preserve_attack_patterns,
         semantic_threshold,
         threat_score_threshold,
+        binary_min_run_length,
     };
     let verdict = guard_core_engine::detect::detect(content, request_context, &config);
 
