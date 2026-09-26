@@ -665,6 +665,7 @@ impl IpBanManager {
     /// target. Violations are counted regardless of the banning switch,
     /// mirroring the reference: enabling banning later starts from observed
     /// history.
+    #[must_use]
     pub fn register_violations(
         &self,
         counters: &ViolationCounters,
