@@ -37,11 +37,10 @@ jobs:
       fail-fast: false
       matrix:
         consumer:
-          # TEMPORARY companion pins: this engine PR changes DetectConfig, so
-          # each consumer must be tested at its companion branch until the
-          # matching adapter PR merges; empty them back to '' right after
-          # (the same moving-pin dance the sibling repos' CI does for this
-          # engine).
+          # The TEMPORARY companion pins from the body-scan work are history:
+          # the engine and all four adapters merged, so every consumer is
+          # tested at master (the same moving-pin dance the sibling repos'
+          # CI does for this engine).
           - repo: rennf93/actix-guard-rs
             path: actix-guard-rs
             test_ref: master
