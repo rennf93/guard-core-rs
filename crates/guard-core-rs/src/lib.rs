@@ -18,6 +18,8 @@
 //! - [`cloud_provider`] - the cloud-provider blocking pipeline stage as a
 //!   `tower::Layer` (403 "Cloud provider IP not allowed", region
 //!   carve-outs, skip-state aware)
+//! - [`geo`] - the geo country blocking pipeline stage as a `tower::Layer`
+//!   (403 "Forbidden", loopback exemption, whitelist-skip only)
 //! - [`tower`] - the rate-limit and dynamic IP ban pipeline stage as a
 //!   `tower::Layer` (429 throttled shape, 403 banned shapes, exempt-IP
 //!   handling, and the auto-ban feeds)
@@ -49,6 +51,7 @@
 //! ```
 
 pub mod cloud_provider;
+pub mod geo;
 pub mod headers_auth;
 pub mod request_limits;
 pub mod tower;

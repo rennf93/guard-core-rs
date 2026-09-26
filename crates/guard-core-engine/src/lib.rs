@@ -3,6 +3,7 @@ pub mod body_scan;
 pub mod cloud_provider;
 pub mod compiler;
 pub mod detect;
+pub mod geo;
 pub mod headers_auth;
 pub mod ip_ban;
 pub mod ip_gate;
