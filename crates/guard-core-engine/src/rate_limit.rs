@@ -186,8 +186,21 @@ struct WindowKey {
 /// internal store is a mutex-guarded LRU, safe for concurrent services.
 pub struct RateLimiter {
     config: RateLimitConfig,
-    windows: Mutex<LruCache<WindowKey, VecDeque<f64>>>,
+    windows: Arc<Mutex<LruCache<WindowKey, VecDeque<f64>>>>,
     clock: Clock,
+}
+
+impl Clone for RateLimiter {
+    /// A clone shares the window store and the clock, the references'
+    /// singleton semantics: requests recorded through any handle land in the
+    /// same sliding windows.
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            windows: Arc::clone(&self.windows),
+            clock: Arc::clone(&self.clock),
+        }
+    }
 }
 
 impl core::fmt::Debug for RateLimiter {
@@ -202,6 +215,14 @@ fn system_clock() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0.0, |d| d.as_secs_f64())
+}
+
+/// A fresh shared window store (the store lives behind an `Arc` so clones of
+/// the limiter share it).
+fn new_window_store() -> Arc<Mutex<LruCache<WindowKey, VecDeque<f64>>>> {
+    Arc::new(Mutex::new(LruCache::new(
+        NonZeroUsize::new(MAX_TRACKED_RATE_LIMIT_KEYS).expect("constant above zero"),
+    )))
 }
 
 impl RateLimiter {
@@ -228,9 +249,7 @@ impl RateLimiter {
         }
         Ok(Self {
             config,
-            windows: Mutex::new(LruCache::new(
-                NonZeroUsize::new(MAX_TRACKED_RATE_LIMIT_KEYS).expect("constant above zero"),
-            )),
+            windows: new_window_store(),
             clock: Arc::new(system_clock),
         })
     }
@@ -241,9 +260,7 @@ impl RateLimiter {
     pub fn with_clock(clock: Clock) -> Self {
         Self {
             config: RateLimitConfig::default(),
-            windows: Mutex::new(LruCache::new(
-                NonZeroUsize::new(MAX_TRACKED_RATE_LIMIT_KEYS).expect("constant above zero"),
-            )),
+            windows: new_window_store(),
             clock,
         }
     }
@@ -420,7 +437,9 @@ mod tests {
         let fake = FakeClock::default();
         let limiter = RateLimiter {
             config: enabled_config(2),
-            windows: Mutex::new(LruCache::new(NonZeroUsize::new(16).expect("above zero"))),
+            windows: Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(16).expect("above zero"),
+            ))),
             clock: fake.clock(),
         };
         assert!(limiter.check(ip("192.0.2.1"), None).allowed);

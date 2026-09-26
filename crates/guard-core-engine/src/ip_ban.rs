@@ -306,6 +306,14 @@ fn system_clock() -> f64 {
 
 const LOOPBACK_NETWORKS: [&str; 2] = ["127.0.0.0/8", "::1/128"];
 
+/// A fresh shared ban store (the store lives behind an `Arc` so clones of
+/// the manager share it, the references' singleton semantics).
+fn new_ban_store() -> Arc<Mutex<LruCache<IpAddr, BanRecord>>> {
+    Arc::new(Mutex::new(LruCache::new(
+        NonZeroUsize::new(LOCAL_CACHE_MAX_SIZE).expect("constant above zero"),
+    )))
+}
+
 /// The dynamic IP ban store over one shared in-memory map.
 ///
 /// Build it once at startup and share the handle across requests; the
@@ -314,9 +322,23 @@ const LOOPBACK_NETWORKS: [&str; 2] = ["127.0.0.0/8", "::1/128"];
 /// ([`IpBanManager::with_trusted_proxies`]) because they shape the
 /// self-ban refusal, not per-request behavior.
 pub struct IpBanManager {
-    bans: Mutex<LruCache<IpAddr, BanRecord>>,
+    bans: Arc<Mutex<LruCache<IpAddr, BanRecord>>>,
     trusted_proxies: Vec<IpNet>,
     clock: Clock,
+}
+
+impl Clone for IpBanManager {
+    /// A clone shares the ban store and the clock, exactly the references'
+    /// singleton semantics: bans recorded through any handle are visible to
+    /// every handle. Trusted proxies are copied (they shape the self-DoS
+    /// refusal only).
+    fn clone(&self) -> Self {
+        Self {
+            bans: Arc::clone(&self.bans),
+            trusted_proxies: self.trusted_proxies.clone(),
+            clock: Arc::clone(&self.clock),
+        }
+    }
 }
 
 impl core::fmt::Debug for IpBanManager {
@@ -338,9 +360,7 @@ impl IpBanManager {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            bans: Mutex::new(LruCache::new(
-                NonZeroUsize::new(LOCAL_CACHE_MAX_SIZE).expect("constant above zero"),
-            )),
+            bans: new_ban_store(),
             trusted_proxies: Vec::new(),
             clock: Arc::new(system_clock),
         }
@@ -373,9 +393,7 @@ impl IpBanManager {
             }
         }
         Ok(Self {
-            bans: Mutex::new(LruCache::new(
-                NonZeroUsize::new(LOCAL_CACHE_MAX_SIZE).expect("constant above zero"),
-            )),
+            bans: new_ban_store(),
             trusted_proxies,
             clock: Arc::new(system_clock),
         })
@@ -386,9 +404,7 @@ impl IpBanManager {
     #[must_use]
     pub fn with_clock(clock: Clock) -> Self {
         Self {
-            bans: Mutex::new(LruCache::new(
-                NonZeroUsize::new(LOCAL_CACHE_MAX_SIZE).expect("constant above zero"),
-            )),
+            bans: new_ban_store(),
             trusted_proxies: Vec::new(),
             clock,
         }
@@ -501,7 +517,17 @@ impl IpBanManager {
 /// reference evicts the oldest IP at the same cap), so attacker IP
 /// cardinality cannot grow it without bound.
 pub struct ViolationCounters {
-    counts: Mutex<LruCache<IpAddr, HashMap<String, u64>>>,
+    counts: Arc<Mutex<LruCache<IpAddr, HashMap<String, u64>>>>,
+}
+
+impl Clone for ViolationCounters {
+    /// A clone shares the count store: violations recorded through any
+    /// handle are visible to every handle.
+    fn clone(&self) -> Self {
+        Self {
+            counts: Arc::clone(&self.counts),
+        }
+    }
 }
 
 impl core::fmt::Debug for ViolationCounters {
@@ -521,9 +547,9 @@ impl ViolationCounters {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            counts: Mutex::new(LruCache::new(
+            counts: Arc::new(Mutex::new(LruCache::new(
                 NonZeroUsize::new(MAX_TRACKED_SUSPICIOUS_IPS).expect("constant above zero"),
-            )),
+            ))),
         }
     }
 
