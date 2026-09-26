@@ -452,6 +452,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#blocked-user-agents-user_agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Blocked user agents (user_agent)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-tower-stage-guard_core_rstower" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -624,6 +635,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#blocked-user-agents-user_agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Blocked user agents (user_agent)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#the-tower-stage-guard_core_rstower" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -737,9 +759,8 @@ deny path of its own and never opens the whitelist gate: with a restrictive
 whitelist, an exempt IP that is not itself whitelisted is still denied. The
 stateful stages below (rate limiting, violation counting, dynamic bans) skip
 exactly what the reference skips for a whitelist match
-(<code>is_whitelisted || is_exempt</code>) and never skip penetration detection; a
-stage that lands later (user-agent filter, cloud-provider blocker) must
-follow the same rule.</p>
+(<code>is_whitelisted || is_exempt</code>) and never skip penetration detection; the
+user-agent filter below follows the same rule.</p>
 <h2 id="rate-limiting-rate_limit">Rate limiting (rate_limit)</h2>
 <p>The sliding-window rate limiter mirrors the reference engine's rate
 limiter in its in-memory mode (the reference falls back to this exact store
@@ -998,6 +1019,69 @@ is <code>guard_core_rs::request_limits::RequestLimitsStageLayer</code>.</p>
 entries, <code>passive_mode</code> (no Rust config surface yet), the <code>on_block</code> hook,
 and <code>custom_error_responses</code> body overrides. The decision core returns the
 reference reason strings for adapters that log.</p>
+<h2 id="blocked-user-agents-user_agent">Blocked user agents (user_agent)</h2>
+<p>The user-agent filter mirrors the reference engine's <code>user_agent</code> check
+(<code>guard_core/core/checks/implementations/user_agent.py</code>) and its matcher
+(<code>_user_agent_matches_blocked_pattern</code> / <code>is_user_agent_allowed</code>). The
+decision core is <code>guard_core_engine::user_agent::UserAgentFilter</code>; the tower
+stage is <code>guard_core_rs::user_agent::UserAgentStageLayer</code>.</p>
+<p>The config knob is the reference <code>blocked_user_agents</code> list, where every
+entry is a regular expression:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Reference knob</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>UserAgentStageConfig.blocked_user_agents</code></td>
+<td><code>UserAgentFilter</code> (compiled <code>blocked_user_agents</code>)</td>
+<td>empty, never blocks</td>
+<td><code>SecurityConfig.blocked_user_agents</code></td>
+</tr>
+<tr>
+<td><code>UserAgentStageConfig.ip_ban</code></td>
+<td><code>IpBanConfig</code></td>
+<td>off</td>
+<td><code>enable_ip_banning</code> + thresholds</td>
+</tr>
+</tbody>
+</table>
+<p>Behavior:</p>
+<ul>
+<li><strong>Matching</strong>: the <code>User-Agent</code> header value is truncated to its first 512
+  code points (<code>_MAX_USER_AGENT_MATCH_LENGTH</code>) and tested against every
+  pattern with search semantics under the reference compiler's
+  case-insensitive + multiline flags; any match blocks. A missing header
+  reads as the empty string.</li>
+<li><strong>Validation</strong>: <code>UserAgentFilter::new</code> fails closed on a pattern the ReDoS
+  validator rejects (<code>_validate_blocked_user_agents_value</code> raises the same
+  way) and, diverging earlier, on a pattern the regex engine cannot compile
+  (the reference would raise at request time and trip the fail-secure 500).</li>
+<li><strong>Skip state</strong>: the stage passes for <code>is_whitelisted \|\| is_exempt</code>, read
+  from an <code>IpGateDecision</code> request extension.</li>
+<li><strong>Route lists</strong>: the reference tries <code>route_config.blocked_user_agents</code>
+  before the global list; the builder's <code>routes</code> seam resolves a path to a
+  compiled per-route filter (same route seam as <code>request_limits</code>).</li>
+<li><strong>The block shape</strong>: <code>403 "User-Agent not allowed"</code>, answered even without
+  a client IP.</li>
+<li><strong>The ban feed</strong>: a block runs the reference's
+  <code>escalate_identity_violation</code> shape - only a <code>ThreatFinding</code> request
+  extension marked <code>is_threat</code> counts (empty categories record
+  <code>uncategorized</code>), feeding <code>register_violations</code> under reason
+  <code>Blocked user agent: &lt;truncated user agent&gt;</code> with the stage's
+  <code>IpBanConfig</code>. The 403 goes out either way; the ban answers the next
+  request. The builder's <code>ban_engine</code> seam shares the
+  <code>IpBanManager</code>/<code>ViolationCounters</code> pair with the rate-limit stage (the
+  reference's module-singleton); without it the stage holds a private pair.</li>
+</ul>
+<p>Not mirrored: <code>log_activity</code>/event emissions, <code>passive_mode</code> (no Rust config
+surface yet), and the <code>log_sensitive_*</code> redaction of the user agent in
+reasons.</p>
 <h2 id="the-tower-stage-guard_core_rstower">The tower stage (guard_core_rs::tower)</h2>
 <p>The facade crate carries the first pipeline stage: a <code>tower::Layer</code>
 (<code>RateLimitStageLayer</code>) for Axum/tonic-shaped stacks that wires the stateful
@@ -1112,6 +1196,10 @@ respectively), and the trusted-proxies seam stays on the stage builder
   exists (<code>request_limits</code>), but there
   is no Redis-backed distributed mode, no cloud provider blocking, no
   user-agent filtering, and no response factory; the remaining pipeline
+  <code>examples/rocket_app</code>), and the user-agent filter exists (<code>user_agent</code>),
+  but there
+  is no Redis-backed distributed mode, no cloud provider blocking, and no
+  response factory; the remaining pipeline
   stages and the published framework adapters live in the adapter repos.</li>
 <li><strong><code>PerformanceMonitor</code></strong> and per-scan timeouts, plus a handful of tracked
   detection knobs recorded as unmapped with reasons.</li>
