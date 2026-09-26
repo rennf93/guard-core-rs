@@ -1,0 +1,30 @@
+[package]
+name          = "guard-core-rs-rocket-app"
+version       = "0.1.0"
+authors       = { workspace = true }
+categories    = { workspace = true }
+description   = "Rate-limit and dynamic-ban stage for Rocket over guard-core-rs (example service)."
+documentation = { workspace = true }
+edition       = { workspace = true }
+homepage      = { workspace = true }
+keywords      = { workspace = true }
+license       = { workspace = true }
+repository    = { workspace = true }
+rust-version  = { workspace = true }
+publish       = false
+
+[dependencies]
+guard-core-rs = { workspace = true }
+rocket        = "0.5"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all                      = { level = "deny", priority = -1 }
+cast_possible_truncation = "allow"
+missing_errors_doc       = "allow"
+missing_panics_doc       = "allow"
+module_name_repetitions  = "allow"
+nursery                  = { level = "warn", priority = -1 }
+pedantic                 = { level = "warn", priority = -1 }

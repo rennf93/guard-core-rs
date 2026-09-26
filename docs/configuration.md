@@ -207,6 +207,42 @@ behavior for the two checks the stage owns (`rate_limit`, the ban check of
   `400` answer for a threat below the ban threshold (the detection stage
   has no tower counterpart yet).
 
+## The actix-web and rocket example stages (examples/)
+
+The same stage ships wired for two more frameworks as example workspace
+members, reusing `RateLimitStage::decide()` as the single decision point so
+the family shapes are byte-identical to the tower stage. Both hold no
+security logic of their own; the translation from native request types to
+`decide()` inputs and back is the wiring an adapter performs.
+
+- `examples/actix_app` (`src/stage.rs`): an actix-web `Transform`
+  middleware (`RateLimitStageTransform`) installed with `App::wrap` or
+  `Scope::wrap`. The client IP comes from the peer address
+  (`req.peer_addr()`), falling back to the tower default's forwarded-header
+  policy (leftmost `x-forwarded-for`, then `x-real-ip`) reimplemented over
+  actix's types: actix-web 4 still speaks `http` 0.2 on its public surface
+  while the facade stage speaks `http` 1.x, so the tower default extractor
+  cannot be reused verbatim. actix-web's own
+  `ConnectionInfo::realip_remote_addr` machinery is not consulted.
+- `examples/rocket_app` (`src/stage.rs`): a request guard
+  (`RateLimitGuard`) plus ignite fairing plus scoped catchers, the
+  `rocket-guard-rs` adapter's pattern. Rocket guards cannot respond
+  directly, so the block answer is stashed in request-local state and the
+  error outcome dispatches to the matching catcher, which renders the
+  family shape. The client IP comes from Rocket's own `client_ip()` seam:
+  the configured `ip_header` (`X-Real-IP` by default) when present and
+  parseable, else the remote peer. Mind the posture difference from the
+  tower default (peer first): a direct-exposure deployment should set
+  `ip_header = ""` so a client-supplied header cannot spoof its throttling
+  identity. A request arriving while the managed stage is absent is refused
+  `500` (fail-secure), never passed uninspected.
+
+In both stages the skip state (`is_whitelisted`, `is_exempt`) and the
+detection result arrive exactly as in tower (an `IpGateDecision` and a
+`ThreatFinding`, in request extensions or request-local cache entries
+respectively), and the trusted-proxies seam stays on the stage builder
+(`RateLimitStage::builder(..).trusted_proxies(..)`).
+
 ## What is not implemented (fail-closed honesty)
 
 The port targets spec 4.0.2 and is not complete. Do not expect these yet:
@@ -220,10 +256,12 @@ The port targets spec 4.0.2 and is not complete. Do not expect these yet:
   protocols, or decorators. The global IP gate (`whitelist`, `blacklist`,
   `exempt_ips`) exists (`ip_gate`), the in-memory rate limiter and dynamic
   IP ban store exist (`rate_limit`, `ip_ban`), and the rate-limit/ban
-  pipeline stage exists for tower stacks (`guard_core_rs::tower`), but there
+  pipeline stage exists for tower stacks (`guard_core_rs::tower`) and as
+  example wirings for actix-web and Rocket (`examples/actix_app`,
+  `examples/rocket_app`), but there
   is no Redis-backed distributed mode, no cloud provider blocking, no
-  user-agent filtering, and no response factory; actix/rocket stages and
-  the remaining pipeline stages live in the framework adapters.
+  user-agent filtering, and no response factory; the remaining pipeline
+  stages and the published framework adapters live in the adapter repos.
 - **`PerformanceMonitor`** and per-scan timeouts, plus a handful of tracked
   detection knobs recorded as unmapped with reasons.
 
