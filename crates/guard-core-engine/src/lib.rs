@@ -2,6 +2,7 @@ pub mod binary_islands;
 pub mod body_scan;
 pub mod compiler;
 pub mod detect;
+pub mod ip_gate;
 pub mod json_walk;
 pub mod multipart_scan;
 pub mod patterns;
