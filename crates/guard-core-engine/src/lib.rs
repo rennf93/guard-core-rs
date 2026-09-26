@@ -9,4 +9,5 @@ pub mod multipart_scan;
 pub mod patterns;
 pub mod preprocessor;
 pub mod rate_limit;
+pub mod request_limits;
 pub mod semantic;
