@@ -43,8 +43,9 @@
 //!   and `log_activity` entries, honors `passive_mode` (log-only), the
 //!   `on_block` hook, and `custom_error_responses` body overrides. The Rust
 //!   config surface has no event bus, no `passive_mode`, and no custom-body
-//!   map yet; the [`ContentBlock`] the decision core returns carries the
-//!   reference reason strings for adapters that log.
+//!   map yet; the
+//!   [`guard_core_engine::request_limits::ContentBlock`] the decision core
+//!   returns carries the reference reason strings for adapters that log.
 //!
 //! # Example
 //!
